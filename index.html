@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Maze Runner — Dispatcher Control</title>
+<style>
+:root {
+  --bg: #ffffff; --surface: #f1f5f9; --border: #cbd5e1; --text: #0f172a;
+  --primary: #3b82f6; --wall-active: #8b5a2b; --wall-inactive: #e2e8f0;
+  --cell-active: #ffffff; --cell-inactive: #e2e8f0; --panel-bg: #f8fafc;
+  --danger: #ef4444; --success: #22c55e; --warn: #f59e0b;
+  --cell-size: 64px; --wall-size: 8px;
+}
+body.theme-dark {
+  --bg:#0f172a;--surface:#1e293b;--border:#334155;--text:#f8fafc;
+  --primary:#60a5fa;--wall-active:#fb923c;--wall-inactive:#334155;
+  --cell-active:#1e293b;--cell-inactive:#0f172a;--panel-bg:#1e293b;
+}
+body.theme-hacker {
+  --bg:#000;--surface:#0a0a0a;--border:#003300;--text:#00ff00;
+  --primary:#00ff00;--wall-active:#00ff00;--wall-inactive:#111;
+  --cell-active:#000;--cell-inactive:#050505;--panel-bg:#050505;
+}
+body.theme-neon {
+  --bg:#2b1055;--surface:#3b185f;--border:#7e22ce;--text:#fcd34d;
+  --primary:#f472b6;--wall-active:#22d3ee;--wall-inactive:#4c1d95;
+  --cell-active:#3b185f;--cell-inactive:#1e1b4b;--panel-bg:#2e1065;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:monospace;background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden;user-select:none;transition:background 0.3s,color 0.3s;}
+#main-content{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+.topbar{background:var(--bg);border-bottom:1px solid var(--border);padding:8px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;z-index:10;flex-wrap:wrap;}
+.group{display:flex;align-items:center;gap:4px;}
+label{font-weight:bold;font-size:11px;text-transform:uppercase;}
+input[type="number"]{width:46px;padding:4px;font-family:monospace;border:1px solid var(--border);background:var(--surface);color:var(--text);}
+input[type="checkbox"]{accent-color:var(--primary);cursor:pointer;}
+button{font-family:monospace;font-weight:bold;padding:5px 10px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;text-transform:uppercase;transition:0.15s;font-size:11px;}
+button:hover{filter:brightness(0.9);}
+.mode-btn.active{background:var(--text);color:var(--bg);border-color:var(--text);}
+.vdiv{width:1px;height:20px;background:var(--border);}
+.spacer{flex:1;}
+
+/* Compass */
+.compass{display:grid;grid-template-columns:repeat(3,20px);grid-template-rows:repeat(3,20px);gap:2px;}
+.compass button{width:20px;height:20px;padding:0;font-size:11px;display:flex;align-items:center;justify-content:center;}
+.compass button.active{background:var(--primary);color:#fff;border-color:var(--primary);}
+.compass .c-empty{width:20px;height:20px;}
+
+/* Workspace */
+#workspace{flex:1;background:var(--panel-bg);display:flex;align-items:center;justify-content:center;position:relative;padding:20px;overflow:hidden;}
+#maze-container{display:flex;flex-direction:column;position:relative;}
+.cell-row,.wall-h-row{display:flex;align-items:center;}
+.cell{width:var(--cell-size);height:var(--cell-size);background:var(--cell-inactive);cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;transition:filter 0.1s;}
+.cell.active{background:var(--cell-active);box-shadow:inset 0 0 0 1px var(--border);}
+.cell:hover{filter:brightness(1.15);}
+.wall-v{width:var(--wall-size);height:var(--cell-size);background:var(--wall-inactive);cursor:pointer;}
+.wall-h{width:var(--cell-size);height:var(--wall-size);background:var(--wall-inactive);cursor:pointer;}
+.wall-v.on,.wall-h.on{background:var(--wall-active);z-index:2;box-shadow:0 0 5px var(--wall-active);}
+.corner{width:var(--wall-size);height:var(--wall-size);background:var(--bg);}
+.cell-icon{position:absolute;width:82%;height:82%;pointer-events:none;display:flex;align-items:center;justify-content:center;z-index:5;}
+#path-canvas{position:absolute;top:0;left:0;pointer-events:none;z-index:10;}
+
+/* Rover animation */
+#rover-anim{position:absolute;pointer-events:none;z-index:20;display:none;transform:translate(-50%,-50%);}
+
+/* Bottom bar */
+#path-output{background:var(--bg);border-top:1px solid var(--border);padding:8px 16px;font-size:12px;flex-shrink:0;min-height:44px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+.status-success{color:var(--success);font-weight:bold;}
+.status-danger{color:var(--danger);font-weight:bold;}
+.status-warn{color:var(--warn);font-weight:bold;}
+#path-route{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* Right theme panel */
+#theme-panel{width:160px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;padding:16px 8px;gap:8px;}
+#theme-panel h3{font-size:12px;text-transform:uppercase;margin-bottom:6px;text-align:center;}
+
+
+.theme-btn{width:100%;padding:8px;text-align:center;border-radius:3px;border:1px solid var(--border);}
+
+/* Solve button */
+.btn-solve{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;padding:6px 14px;font-size:12px;}
+.btn-solve:hover{filter:brightness(1.1);}
+.btn-solve:disabled{opacity:0.5;cursor:not-allowed;}
+
+/* Charging glow animation */
+@keyframes chargeGlow{0%,100%{filter:drop-shadow(0 0 4px #00ff88);}50%{filter:drop-shadow(0 0 14px #00ff88) brightness(1.3);}}
+.rover-charging{animation:chargeGlow 0.6s infinite;}
+
+/* Step counter badge */
+#step-badge{background:var(--primary);color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;display:none;}
+
+/* ── Maze Gallery Modal ───────────────────────────────────── */
+#gallery-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:500;display:none;align-items:center;justify-content:center;}
+#gallery-overlay.open{display:flex;}
+#gallery-box{background:var(--bg);border:1px solid var(--border);border-radius:8px;width:min(94vw,920px);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;}
+#gallery-head{padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+#gallery-head h2{font-size:13px;text-transform:uppercase;letter-spacing:1px;}
+#gallery-grid{padding:16px 18px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:14px;flex:1;}
+.mcard{border:2px solid var(--border);background:var(--surface);border-radius:6px;padding:10px 8px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;transition:border-color 0.15s,transform 0.12s;}
+.mcard:hover{border-color:var(--primary);transform:translateY(-2px);}
+.mcard svg{width:130px;height:130px;border-radius:3px;}
+.mcard-name{font-size:11px;font-family:monospace;font-weight:bold;text-align:center;word-break:break-word;line-height:1.3;}
+.mcard-meta{font-size:10px;opacity:0.55;text-align:center;}
+.mcard-del{font-size:10px;color:var(--danger);cursor:pointer;margin-top:1px;}
+.mcard-del:hover{text-decoration:underline;}
+#gallery-empty{grid-column:1/-1;text-align:center;opacity:0.5;padding:40px 20px;font-size:13px;line-height:1.8;}
+</style>
+</head>
+<body>
+
+<div id="main-content">
+  <div class="topbar">
+
+    <!-- Grid size -->
+    <div class="group">
+      <label>R</label><input type="number" id="rows" value="4" min="1" max="20">
+      <label>C</label><input type="number" id="cols" value="4" min="1" max="20">
+      <button onclick="generateGrid(true)">Build</button>
+    </div>
+    <div class="vdiv"></div>
+
+    <!-- Battery -->
+    <div class="group">
+      <button id="run-mission" onclick="setRunMode('mission')" style="background:var(--primary);color:#fff;border-color:var(--primary);">CONSTRAINED</button>
+      <button id="run-continuous" onclick="setRunMode('continuous')" style="background:var(--surface);color:var(--text);">CONTINUOUS</button>
+    </div>
+    <div class="group">
+      <label>Bat:</label>
+      <input type="number" id="battery-cap" value="10" min="1">
+    </div>
+    <div class="vdiv"></div>
+
+    <!-- Modes -->
+    <button class="mode-btn active" id="mode-cell" onclick="setMode('cell')">Grid</button>
+    <button class="mode-btn" id="mode-start" onclick="setMode('start')">Start</button>
+    <button class="mode-btn" id="mode-end" onclick="setMode('end')">End</button>
+    <button class="mode-btn" id="mode-charge" onclick="setMode('charge')">Station</button>
+    <div class="vdiv"></div>
+
+    <!-- Robot Direction Compass -->
+    <div class="group">
+      <label>Dir:</label>
+      <div class="compass">
+        <div class="c-empty"></div>
+        <button id="dir-north" onclick="setDir('north')" title="North" class="active">↑</button>
+        <div class="c-empty"></div>
+        <button id="dir-west"  onclick="setDir('west')"  title="West">←</button>
+        <div class="c-empty"></div>
+        <button id="dir-east"  onclick="setDir('east')"  title="East">→</button>
+        <div class="c-empty"></div>
+        <button id="dir-south" onclick="setDir('south')" title="South">↓</button>
+        <div class="c-empty"></div>
+      </div>
+    </div>
+    <div class="vdiv"></div>
+
+    <!-- Solve -->
+    <button class="btn-solve" id="solve-btn" onclick="solve()">SOLVE ▶</button>
+    <span id="step-badge">step 0</span>
+
+    <button onclick="openGallery()">📂 Mazes</button>
+    <div class="vdiv"></div>
+
+    <div class="spacer"></div>
+
+    <button onclick="exportData()">⬇ Request</button>
+    <input type="file" id="json-upload" accept=".json" style="display:none" onchange="loadJSON(event)">
+    <button onclick="document.getElementById('json-upload').click()">⬆ Load JSON</button>
+  </div>
+
+  <div id="workspace">
+    <div id="maze-container"></div>
+    <canvas id="path-canvas"></canvas>
+    <div id="rover-anim"></div>
+  </div>
+
+  <div id="path-output">
+    <div id="path-route">No path loaded. Build a maze and click SOLVE.</div>
+    <div id="path-status"></div>
+  </div>
+</div>
+
+<div id="theme-panel">
+  <h3>Theme</h3>
+  <button class="theme-btn" style="background:#fff;color:#000;" onclick="setTheme('light')">Light</button>
+  <button class="theme-btn" style="background:#0f172a;color:#fff;" onclick="setTheme('dark')">Dark</button>
+  <button class="theme-btn" style="background:#000;color:#00ff00;border-color:#00ff00" onclick="setTheme('hacker')">Hacker</button>
+  <button class="theme-btn" style="background:#2b1055;color:#fcd34d;border-color:#f472b6" onclick="setTheme('neon')">Neon</button>
+  <hr style="border-color:var(--border);margin:4px 0;">
+  <label style="display:block;text-align:center;margin-bottom:4px;">Speed</label>
+  <input type="range" id="anim-speed" min="200" max="1500" value="1000" style="width:100%;">
+
+  <hr style="border-color:var(--border);margin:15px 0 10px 0;">
+  <button class="theme-btn" style="background:var(--primary);color:#fff;font-weight:bold;border:none;padding:10px;" onclick="resetToEdit()">✎ EDIT GRID</button>
+</div>
+
+<div id="gallery-overlay" onclick="if(event.target===this)closeGallery()">
+  <div id="gallery-box">
+    <div id="gallery-head">
+      <h2>📂 Maze Library</h2>
+      <button onclick="closeGallery()">✕ Close</button>
+    </div>
+    <div id="gallery-grid"></div>
+  </div>
+</div>
+
+<script>
+
+let gridRows = 4, gridCols = 4;
+let currentMode = 'cell';
+let robotDirection = 'north';
+let startCell = null, endCell = null;
+let chargeCells = new Set();
+let currentPath = null;
+let animRunning = false;
+let animCancel = false;
+let runMode = 'mission';
+
+function setRunMode(mode) {
+  runMode = mode;
+  const btnMission = document.getElementById('run-mission');
+  const btnCont = document.getElementById('run-continuous');
+  const batInput = document.getElementById('battery-cap');
+
+  if (mode === 'mission') {
+    btnMission.style.background = 'var(--primary)';
+    btnMission.style.color = '#fff';
+    btnMission.style.borderColor = 'var(--primary)';
+
+    btnCont.style.background = 'var(--surface)';
+    btnCont.style.color = 'var(--text)';
+    btnCont.style.borderColor = 'var(--border)';
+
+    batInput.disabled = false;
+    batInput.style.opacity = '1';
+  } else {
+    btnCont.style.background = 'var(--primary)';
+    btnCont.style.color = '#fff';
+    btnCont.style.borderColor = 'var(--primary)';
+
+    btnMission.style.background = 'var(--surface)';
+    btnMission.style.color = 'var(--text)';
+    btnMission.style.borderColor = 'var(--border)';
+
+    batInput.disabled = true;
+    batInput.style.opacity = '0.4';
+  }
+}
+
+function evStationSVG() {
+  return `<svg viewBox="0 0 80 100" xmlns="http://www.w3.org/2000/svg" style="width:82%;height:82%">
+    <ellipse cx="40" cy="96" rx="22" ry="4" fill="rgba(0,0,0,0.25)"/>
+    <rect x="22" y="18" width="36" height="72" rx="7" fill="#1a5c1a"/>
+    <rect x="22" y="18" width="18" height="72" rx="7" fill="#236b23"/>
+    <rect x="16" y="12" width="48" height="10" rx="4" fill="#0d3a0d"/>
+    <rect x="18" y="12" width="44" height="6" rx="3" fill="#2e8b2e"/>
+    <rect x="27" y="24" width="26" height="20" rx="3" fill="#0a1a0a"/>
+    <rect x="29" y="26" width="22" height="16" rx="2" fill="#00e676"/>
+    <rect x="31" y="28" width="14" height="3" rx="1" fill="#004d00"/>
+    <rect x="31" y="33" width="9"  height="2" rx="1" fill="#006600"/>
+    <rect x="31" y="37" width="18" height="2" rx="1" fill="#003300"/>
+    <polygon points="46,52 37,68 42,68 39,82 52,65 46,65" fill="#ffe000" stroke="#ffa000" stroke-width="1"/>
+    <rect x="30" y="83" width="10" height="5" rx="2" fill="#111"/>
+    <path d="M35 88 Q52 93 56 82" stroke="#333" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <circle cx="57" cy="80" r="4.5" fill="#444"/>
+    <circle cx="57" cy="80" r="2"   fill="#111"/>
+    <rect x="24" y="20" width="7" height="35" rx="3" fill="rgba(255,255,255,0.07)"/>
+  </svg>`;
+}
+
+
+function roverSVG(dir) {
+  const r = {north:0, east:90, south:180, west:270}[dir] || 0;
+  return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"
+    style="width:100%;height:100%;transform:rotate(${r}deg);transition:transform 0.25s">
+    <rect x="26" y="18" width="48" height="64" rx="9" fill="#f97316"/>
+    <rect x="30" y="14" width="11" height="7" rx="2" fill="#fef08a"/>
+    <rect x="59" y="14" width="11" height="7" rx="2" fill="#fef08a"/>
+    <rect x="12" y="22" width="13" height="20" rx="3" fill="#292524"/>
+    <rect x="75" y="22" width="13" height="20" rx="3" fill="#292524"/>
+    <rect x="12" y="58" width="13" height="20" rx="3" fill="#292524"/>
+    <rect x="75" y="58" width="13" height="20" rx="3" fill="#292524"/>
+    <circle cx="50" cy="50" r="13" fill="#1c1917"/>
+    <circle cx="50" cy="50" r="7"  fill="#44403c"/>
+    <circle cx="50" cy="50" r="3"  fill="#78716c"/>
+  </svg>`;
+}
+
+
+function setTheme(t) {
+  document.body.className = t === 'light' ? '' : `theme-${t}`;
+}
+
+function setDir(d) {
+  robotDirection = d;
+  document.querySelectorAll('.compass button').forEach(b => b.classList.remove('active'));
+  document.getElementById(`dir-${d}`).classList.add('active');
+  if (startCell) refreshIcons(); // update rover icon orientation
+}
+
+function setMode(m) {
+  currentMode = m;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`mode-${m}`).classList.add('active');
+}
+
+
+function refreshIcons() {
+  document.querySelectorAll('.cell-icon').forEach(el => el.remove());
+  if (startCell) {
+    const c = document.getElementById(`cell-${startCell[0]}-${startCell[1]}`);
+    if (c) {
+      const d = document.createElement('div');
+      d.className = 'cell-icon';
+      d.id = 'static-start-rover'; // <-- ADD THIS ID
+      d.innerHTML = roverSVG(robotDirection);
+      c.appendChild(d);
+    }
+  }
+  if (endCell) {
+    const c = document.getElementById(`cell-${endCell[0]}-${endCell[1]}`);
+    if (c) {
+      const d = document.createElement('div');
+      d.className = 'cell-icon';
+      d.style.fontSize = 'calc(var(--cell-size) * 0.5)';
+      d.textContent = '🏁';
+      c.appendChild(d);
+    }
+  }
+  chargeCells.forEach(key => {
+    const [r, c] = key.split(',');
+    const cell = document.getElementById(`cell-${r}-${c}`);
+    if (cell) {
+      const d = document.createElement('div');
+      d.className = 'cell-icon';
+      d.innerHTML = evStationSVG();
+      cell.appendChild(d);
+    }
+  });
+}
+
+
+function cellClick(r, c) {
+  const cell = document.getElementById(`cell-${r}-${c}`);
+  if (!cell) return;
+  if (currentMode === 'cell') {
+    cell.classList.toggle('active');
+  } else if (currentMode === 'start') {
+    startCell = [r, c];
+    if (!cell.classList.contains('active')) cell.classList.add('active');
+    refreshIcons();
+  } else if (currentMode === 'end') {
+    endCell = [r, c];
+    if (!cell.classList.contains('active')) cell.classList.add('active');
+    refreshIcons();
+  } else if (currentMode === 'charge') {
+    const k = `${r},${c}`;
+    if (!cell.classList.contains('active')) cell.classList.add('active');
+    chargeCells.has(k) ? chargeCells.delete(k) : chargeCells.add(k);
+    refreshIcons();
+  }
+}
+
+
+function calculateScaling() {
+  const ws = document.getElementById('workspace');
+  const maxW = ws.clientWidth - 40, maxH = ws.clientHeight - 40;
+  const ux = gridCols * 10 + (gridCols + 1) * 1.5;
+  const uy = gridRows * 10 + (gridRows + 1) * 1.5;
+  const scale = Math.min(maxW / ux, maxH / uy, 10);
+  document.documentElement.style.setProperty('--cell-size', `${scale * 10}px`);
+  document.documentElement.style.setProperty('--wall-size', `${Math.max(scale * 1.5, 6)}px`);
+}
+
+function generateGrid(defaultState = true) {
+  gridRows = parseInt(document.getElementById('rows').value);
+  gridCols = parseInt(document.getElementById('cols').value);
+  if (defaultState) { startCell = null; endCell = null; chargeCells.clear(); currentPath = null; animCancel = true; }
+  calculateScaling();
+
+  const container = document.getElementById('maze-container');
+  container.innerHTML = '';
+
+  for (let r = 0; r <= gridRows; r++) {
+    const hRow = document.createElement('div');
+    hRow.className = 'wall-h-row';
+    for (let c = 0; c <= gridCols; c++) {
+      const corner = document.createElement('div'); corner.className = 'corner'; hRow.appendChild(corner);
+      if (c < gridCols) {
+        const hw = document.createElement('div');
+        hw.className = 'wall-h' + (defaultState ? ' on' : '');
+        hw.id = `hwall-${r}-${c}`;
+        hw.onclick = () => hw.classList.toggle('on');
+        hRow.appendChild(hw);
+      }
+    }
+    container.appendChild(hRow);
+
+    if (r < gridRows) {
+      const cellRow = document.createElement('div'); cellRow.className = 'cell-row';
+      for (let c = 0; c <= gridCols; c++) {
+        const vw = document.createElement('div');
+        vw.className = 'wall-v' + (defaultState ? ' on' : '');
+        vw.id = `vwall-${r}-${c}`;
+        vw.onclick = () => vw.classList.toggle('on');
+        cellRow.appendChild(vw);
+        if (c < gridCols) {
+          const cell = document.createElement('div');
+          cell.className = 'cell' + (defaultState ? ' active' : '');
+          cell.id = `cell-${r}-${c}`;
+          cell.onclick = () => cellClick(r, c);
+          cellRow.appendChild(cell);
+        }
+      }
+      container.appendChild(cellRow);
+    }
+  }
+
+  hideRover();
+  clearCanvas();
+  if (defaultState) {
+    document.getElementById('path-route').textContent = 'No path loaded. Build a maze and click SOLVE.';
+    document.getElementById('path-status').textContent = '';
+  } else {
+    refreshIcons();
+  }
+}
+
+
+function getCellCenter(r, c) {
+  const ws = document.getElementById('workspace');
+  const cell = document.getElementById(`cell-${r}-${c}`);
+  if (!cell) return {x:0,y:0};
+  const cr = cell.getBoundingClientRect(), wr = ws.getBoundingClientRect();
+  return { x: cr.left - wr.left + cr.width/2, y: cr.top - wr.top + cr.height/2 };
+}
+
+function clearCanvas() {
+  const cv = document.getElementById('path-canvas');
+  cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+}
+
+function drawPath(steps) {
+  const ws = document.getElementById('workspace');
+  const cv = document.getElementById('path-canvas');
+  cv.width = ws.offsetWidth; cv.height = ws.offsetHeight;
+  const ctx = cv.getContext('2d');
+
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!steps || steps.length < 2) return;
+
+  const style = getComputedStyle(document.body);
+  const pathColor = style.getPropertyValue('--primary').trim() || '#3b82f6';
+  const chargeColor = '#00e676';
+
+  for (let i = 0; i < steps.length - 1; i++) {
+    const p1 = getCellCenter(steps[i].cell[0], steps[i].cell[1]);
+    const p2 = getCellCenter(steps[i+1].cell[0], steps[i+1].cell[1]);
+    const isCharge = steps[i+1].type === 'charge';
+
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = isCharge ? chargeColor : pathColor;
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+
+    // Arrow at midpoint
+    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2, sz = 10;
+    ctx.fillStyle = isCharge ? chargeColor : pathColor;
+    ctx.beginPath();
+    ctx.moveTo(mx + sz*Math.cos(angle), my + sz*Math.sin(angle));
+    ctx.lineTo(mx - sz*Math.cos(angle-Math.PI/6), my - sz*Math.sin(angle-Math.PI/6));
+    ctx.lineTo(mx - sz*Math.cos(angle+Math.PI/6), my - sz*Math.sin(angle+Math.PI/6));
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Step number dots
+  steps.forEach((step, i) => {
+    const p = getCellCenter(step.cell[0], step.cell[1]);
+    const isCharge = step.type === 'charge';
+    const isDest = step.type === 'destination';
+    ctx.fillStyle = isDest ? '#ef4444' : isCharge ? '#00e676' : pathColor;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(step.step, p.x, p.y);
+  });
+}
+
+
+function hideRover() {
+  const rv = document.getElementById('rover-anim');
+  rv.style.display = 'none';
+  rv.classList.remove('rover-charging');
+}
+
+function placeRoverAt(r, c, dir) {
+  const rv = document.getElementById('rover-anim');
+  const p = getCellCenter(r, c);
+  const sz = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 64;
+  rv.style.width = sz + 'px';
+  rv.style.height = sz + 'px';
+  rv.style.left = p.x + 'px';
+  rv.style.top  = p.y + 'px';
+  rv.innerHTML  = roverSVG(dir);
+  rv.style.display = 'block';
+}
+
+function animateTo(r, c, dir) {
+  return new Promise(resolve => {
+    const rv = document.getElementById('rover-anim');
+    const p  = getCellCenter(r, c);
+    const startX = parseFloat(rv.style.left) || p.x;
+    const startY = parseFloat(rv.style.top)  || p.y;
+
+    // Smoothly update rotation without destroying the SVG
+    const svg = rv.querySelector('svg');
+    if (svg) {
+      const deg = {north:0, east:90, south:180, west:270}[dir];
+      svg.style.transform = `rotate(${deg}deg)`;
+    } else {
+      rv.innerHTML = roverSVG(dir);
+    }
+
+    const rawValue = parseInt(document.getElementById('anim-speed').value) || 1000;
+    const speed = 1700 - rawValue; // Flips it: Right = Fast (200ms delay), Left = Slow (1500ms delay)
+    const t0 = performance.now();
+
+    function frame(now) {
+      if (animCancel) { resolve(); return; }
+      const t = Math.min((now - t0) / speed, 1);
+      const e = t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t;
+      rv.style.left = (startX + (p.x - startX)*e) + 'px';
+      rv.style.top  = (startY + (p.y - startY)*e) + 'px';
+      if (t < 1) requestAnimationFrame(frame); else resolve();
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function animateRover(steps) {
+  if (animRunning) { animCancel = true; await sleep(200); }
+  animCancel = false; animRunning = true;
+
+  const staticRover = document.getElementById('static-start-rover');
+  if (staticRover) staticRover.style.display = 'none';
+
+  const badge = document.getElementById('step-badge');
+  badge.style.display = 'inline';
+
+  let currentDir = robotDirection;
+
+  for (let i = 0; i < steps.length; i++) {
+    if (animCancel) break;
+    const step = steps[i];
+    const [r, c] = step.cell;
+
+    if (i === 0) {
+      // 1. Drop the rover onto the starting pad facing its original direction
+      placeRoverAt(r, c, currentDir);
+
+      // 2. Look ahead to step 1 to see which way we need to go
+      if (steps.length > 1) {
+        const next = steps[1].cell;
+        const dr = next[0] - r, dc = next[1] - c;
+        let targetDir = currentDir;
+        if      (dr < 0) targetDir = 'north';
+        else if (dr > 0) targetDir = 'south';
+        else if (dc > 0) targetDir = 'east';
+        else if (dc < 0) targetDir = 'west';
+
+        // 3. If we aren't facing the right way, turn and pause!
+        if (targetDir !== currentDir) {
+          await sleep(100);
+          const svg = document.querySelector('#rover-anim svg');
+          if (svg) {
+            const deg = {north:0, east:90, south:180, west:270}[targetDir];
+            svg.style.transform = `rotate(${deg}deg)`;
+          }
+          currentDir = targetDir;
+          await sleep(300); // Let the CSS rotation finish before moving
+        }
+      }
+    } else {
+      // For all other steps, just calculate direction and move
+      const prev = steps[i-1].cell;
+      const dr = r - prev[0], dc = c - prev[1];
+      let newDir = currentDir;
+      if      (dr < 0) newDir = 'north';
+      else if (dr > 0) newDir = 'south';
+      else if (dc > 0) newDir = 'east';
+      else if (dc < 0) newDir = 'west';
+
+      await animateTo(r, c, newDir);
+      currentDir = newDir;
+    }
+
+    badge.textContent = `step ${step.step} • [${r},${c}]`;
+
+    if (step.type === 'charge') {
+      const rv = document.getElementById('rover-anim');
+      rv.classList.add('rover-charging');
+      document.getElementById('path-status').innerHTML =
+              `<span class="status-warn">⚡ Charging at [${r},${c}]…</span>`;
+      await sleep(2000);
+      rv.classList.remove('rover-charging');
+      document.getElementById('path-status').innerHTML =
+              `<span class="status-success">✔ Charged. Resuming…</span>`;
+      await sleep(400);
+    }
+
+    if (step.type === 'destination') {
+      document.getElementById('path-status').innerHTML =
+              `<span class="status-success">🏁 Destination reached! Mission complete.</span>`;
+    }
+  }
+
+  animRunning = false;
+  badge.style.display = 'none';
+}
+
+
+async function solve() {
+  if (!startCell || !endCell) {
+    alert('Place a Start and End cell first.');
+    return;
+  }
+  animCancel = true;
+  await sleep(100);
+
+  const btn = document.getElementById('solve-btn');
+  btn.disabled = true; btn.textContent = 'SOLVING…';
+  document.getElementById('path-status').innerHTML = `<span class="status-warn">Contacting solver…</span>`;
+
+  const req = buildRequestJSON();
+
+  try {
+    const res = await fetch('http://localhost:8080/solve', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(req)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    applyResponseData(data);
+  } catch (err) {
+    document.getElementById('path-status').innerHTML =
+      `<span class="status-danger">⚠ Cannot reach solver at localhost:8080 — ${err.message}</span>`;
+  }
+
+  btn.disabled = false; btn.textContent = 'SOLVE ▶';
+}
+
+
+function applyResponseData(data) {
+  // Restore grid state from response if config is present
+  if (data.config) {
+    if (data.config.rows)    document.getElementById('rows').value = data.config.rows;
+    if (data.config.columns) document.getElementById('cols').value = data.config.columns;
+    if (data.config.battery_capacity && data.config.battery_capacity !== 999999) {
+      document.getElementById('battery-cap').value = data.config.battery_capacity;
+    }
+  }
+  if (data.active_cells) {
+    data.active_cells.forEach(c => {
+      const cell = document.getElementById(`cell-${c[0]}-${c[1]}`);
+      if (cell) cell.classList.add('active');
+    });
+  }
+  if (data.walls) {
+    data.walls.forEach(w => {
+      const [[r1,c1],[r2,c2]] = w.between;
+      if (r1 === r2) {
+        const wall = document.getElementById(`vwall-${r1}-${Math.max(c1,c2)}`);
+        if (wall) wall.classList.add('on');
+      } else {
+        const wall = document.getElementById(`hwall-${Math.max(r1,r2)}-${c1}`);
+        if (wall) wall.classList.add('on');
+      }
+    });
+  }
+  if (data.start)  startCell = data.start;
+  if (data.end)    endCell   = data.end;
+  if (data.robot_direction) { robotDirection = data.robot_direction; setDir(data.robot_direction); }
+  if (data.charging_stations) {
+    chargeCells.clear();
+    data.charging_stations.forEach(c => chargeCells.add(`${c[0]},${c[1]}`));
+  }
+  refreshIcons();
+
+  // Handle infeasible
+  if (data.feasible === false) {
+    document.getElementById('path-status').innerHTML =
+      `<span class="status-danger">Mission failed. Infeasible route. ${data.message||''}</span>`;
+    document.getElementById('path-route').textContent = 'No path found.';
+    clearCanvas(); hideRover();
+    return;
+  }
+
+  // Normalise path: accept [{step,cell,type}] or [[r,c],[r,c]]
+  let steps = null;
+  if (data.path && data.path.length > 0) {
+    if (Array.isArray(data.path[0])) {
+      // Old flat format [[r,c],...] — wrap it
+      steps = data.path.map((cell, i) => ({
+        step: i,
+        cell: cell,
+        type: i === 0 ? 'start' : i === data.path.length-1 ? 'destination' : 'move'
+      }));
+    } else {
+      steps = data.path; // new format
+    }
+  }
+
+  if (!steps) return;
+
+  currentPath = steps;
+
+  // Bottom bar path string
+  const pathStr = steps.map(s => {
+    if (s.type === 'charge')      return `<${s.cell[0]},${s.cell[1]}>`;
+    if (s.type === 'destination') return `[${s.cell[0]},${s.cell[1]}]`;
+    return `(${s.cell[0]},${s.cell[1]})`;
+  }).join(' → ');
+  document.getElementById('path-route').innerHTML = `Path: ${pathStr}`;
+
+  const cost = data.battery_consumed ?? (steps.length - 1);
+  const cap  = parseInt(document.getElementById('battery-cap').value) || 10;
+
+  if (runMode === 'continuous') {
+    document.getElementById('path-status').innerHTML = `<span class="status-success">Continuous Operation — no battery limits.</span>`;
+  } else if (cost > cap) {
+    document.getElementById('path-status').innerHTML =
+            `<span class="status-danger">Mission failed. Cost ${cost} > Cap ${cap}</span>`;
+  } else {
+    document.getElementById('path-status').innerHTML =
+            `<span class="status-success">Route feasible — ${cost}/${cap} battery units.</span>`;
+  }
+
+  drawPath(steps);
+  animateRover(steps);
+}
+
+function buildRequestJSON() {
+  const actualCap = parseInt(document.getElementById('battery-cap').value) || 10;
+
+  const data = {
+    config: {
+      rows: gridRows,
+      columns: gridCols,
+      battery_capacity: runMode === 'continuous' ? 2147483647 : actualCap
+    },
+    start: startCell,
+    end:   endCell,
+    robot_direction: robotDirection,
+    active_cells: [], charging_stations: [], walls: []
+  };
+
+  for (let r=0; r<gridRows; r++)
+    for (let c=0; c<gridCols; c++)
+      if (document.getElementById(`cell-${r}-${c}`).classList.contains('active'))
+        data.active_cells.push([r,c]);
+  chargeCells.forEach(k => data.charging_stations.push(k.split(',').map(Number)));
+  for (let r=0; r<=gridRows; r++) {
+    for (let c=0; c<=gridCols; c++) {
+      const hw = document.getElementById(`hwall-${r}-${c}`);
+      if (hw && hw.classList.contains('on')) data.walls.push({between:[[r-1,c],[r,c]]});
+      const vw = document.getElementById(`vwall-${r}-${c}`);
+      if (vw && vw.classList.contains('on')) data.walls.push({between:[[r,c-1],[r,c]]});
+    }
+  }
+  return data;
+}
+
+function exportData() {
+  const data = buildRequestJSON();
+  const a = Object.assign(document.createElement('a'), {
+    href: 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2)),
+    download: 'maze_request.json'
+  });
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+
+function loadJSON(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try { applyResponseData(JSON.parse(ev.target.result)); }
+    catch { alert('Failed to parse JSON.'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+function resetToEdit() {
+  animCancel = true;             // Stop any running animations
+  hideRover();                   // Hide the animated rover
+  clearCanvas();                 // Wipe the drawn path
+  currentPath = null;            // Clear path memory
+
+  // Reset the bottom status bar
+  document.getElementById('path-route').textContent = 'Grid reset and ready for editing.';
+  document.getElementById('path-status').innerHTML = '';
+
+  // Re-enable the solve button just in case
+  const btn = document.getElementById('solve-btn');
+  btn.disabled = false;
+  btn.textContent = 'SOLVE ▶';
+
+  // Bring back the static icons (including the start rover)
+  refreshIcons();
+}
+
+const mazeLibrary = [
+
+  { name:"Maze 01 — 3×5 Full Grid", data:{"config":{"rows":3,"columns":5,"battery_capacity":6},"start":[1,0],"end":[1,4],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4]],"charging_stations":[[0,0],[2,0],[0,3]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[0,2],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[1,1],[1,2]]},{"between":[[1,2],[1,3]]},{"between":[[1,3],[1,4]]},{"between":[[1,4],[1,5]]},{"between":[[1,0],[2,0]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[1,4],[2,4]]},{"between":[[2,4],[2,5]]},{"between":[[2,0],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[2,4],[3,4]]}]} },
+
+  { name:"Maze 02 — 3×5 Low Battery", data:{"config":{"rows":3,"columns":5,"battery_capacity":3},"start":[2,0],"end":[1,2],"robot_direction":"south","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4]],"charging_stations":[[2,4],[0,4],[1,4],[0,1]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[0,2],[1,2]]},{"between":[[1,1],[1,2]]},{"between":[[1,2],[1,3]]},{"between":[[0,4],[1,4]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[2,0],[2,1]]},{"between":[[1,4],[2,4]]},{"between":[[2,4],[2,5]]},{"between":[[2,0],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[2,4],[3,4]]}]} },
+
+  { name:"Maze 03 — 6×6 Complex", data:{"config":{"rows":6,"columns":6,"battery_capacity":6},"start":[0,0],"end":[5,3],"robot_direction":"north","active_cells":[[0,0],[0,1],[1,0],[1,1],[2,0],[2,1],[3,0],[3,1],[3,2],[3,3],[3,4],[3,5],[4,0],[4,1],[4,2],[4,3],[4,4],[4,5],[5,0],[5,1],[5,3],[5,4],[5,5]],"charging_stations":[[1,0],[5,0],[3,4]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[0,1],[0,2]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[1,1],[1,2]]},{"between":[[1,0],[2,0]]},{"between":[[2,-1],[2,0]]},{"between":[[2,1],[2,2]]},{"between":[[2,0],[3,0]]},{"between":[[3,-1],[3,0]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[3,2],[3,3]]},{"between":[[2,4],[3,4]]},{"between":[[2,5],[3,5]]},{"between":[[3,5],[3,6]]},{"between":[[3,0],[4,0]]},{"between":[[4,-1],[4,0]]},{"between":[[3,2],[4,2]]},{"between":[[3,4],[4,4]]},{"between":[[4,3],[4,4]]},{"between":[[4,4],[4,5]]},{"between":[[4,5],[4,6]]},{"between":[[4,0],[5,0]]},{"between":[[5,-1],[5,0]]},{"between":[[4,2],[5,2]]},{"between":[[5,1],[5,2]]},{"between":[[4,3],[5,3]]},{"between":[[5,2],[5,3]]},{"between":[[4,4],[5,4]]},{"between":[[5,5],[5,6]]},{"between":[[5,0],[6,0]]},{"between":[[5,1],[6,1]]},{"between":[[5,3],[6,3]]},{"between":[[5,4],[6,4]]},{"between":[[5,5],[6,5]]}]} },
+
+  { name:"Maze 04 — 4×5 Sparse", data:{"config":{"rows":4,"columns":5,"battery_capacity":10},"start":[0,0],"end":[3,2],"robot_direction":"east","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,1],[1,2],[1,3],[1,4],[2,1],[2,2],[2,3],[2,4],[3,2],[3,3]],"charging_stations":[[2,2]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[0,0],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[0,2],[1,2]]},{"between":[[0,3],[1,3]]},{"between":[[1,4],[1,5]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[1,4],[2,4]]},{"between":[[2,3],[2,4]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[3,1],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]}]} },
+
+  { name:"Maze 05 — 4×5 Adjacent", data:{"config":{"rows":4,"columns":5,"battery_capacity":10},"start":[0,0],"end":[1,0],"robot_direction":"east","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3]],"charging_stations":[[2,2]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[0,2],[1,2]]},{"between":[[0,3],[1,3]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[1,4],[2,4]]},{"between":[[2,3],[2,4]]},{"between":[[3,-1],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,0],[4,0]]},{"between":[[3,1],[4,1]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]}]} },
+
+  { name:"Maze 06 — 1×7 Corridor", data:{"config":{"rows":1,"columns":7,"battery_capacity":2},"start":[0,1],"end":[0,4],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[0,5],[0,6]],"charging_stations":[[0,2],[0,3]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[-1,5],[0,5]]},{"between":[[-1,6],[0,6]]},{"between":[[0,6],[0,7]]},{"between":[[0,0],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[0,2],[1,2]]},{"between":[[0,3],[1,3]]},{"between":[[0,4],[1,4]]},{"between":[[0,5],[1,5]]},{"between":[[0,6],[1,6]]}]} },
+
+  { name:"Maze 07 — 3×3 Dense Charge", data:{"config":{"rows":3,"columns":3,"battery_capacity":1},"start":[0,2],"end":[2,2],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]],"charging_stations":[[0,1],[1,0],[0,0],[2,0],[2,1]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[0,2],[0,3]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[1,1],[1,2]]},{"between":[[1,2],[1,3]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[2,2],[2,3]]},{"between":[[2,0],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]}]} },
+
+{ name:"Maze 08 — 6×6 Long Path", data:{"config":{"rows":6,"columns":6,"battery_capacity":3},"start":[0,0],"end":[0,5],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[0,5],[1,1],[1,2],[1,3],[1,4],[2,1],[2,2],[2,3],[2,4],[3,1],[3,2],[3,3],[3,4],[4,1],[4,2],[4,3],[4,4],[5,1],[5,2],[5,3],[5,4]],"charging_stations":[[2,1],[5,1],[5,4],[3,4],[1,4]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[-1,5],[0,5]]},{"between":[[0,5],[0,6]]},{"between":[[0,0],[1,0]]},{"between":[[1,0],[1,1]]},{"between":[[0,5],[1,5]]},{"between":[[1,4],[1,5]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[2,1],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[2,3],[2,4]]},{"between":[[2,4],[2,5]]},{"between":[[3,0],[3,1]]},{"between":[[3,1],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,4],[3,5]]},{"between":[[4,0],[4,1]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]},{"between":[[4,4],[4,5]]},{"between":[[5,0],[5,1]]},{"between":[[5,4],[5,5]]},{"between":[[5,1],[6,1]]},{"between":[[5,2],[6,2]]},{"between":[[5,3],[6,3]]},{"between":[[5,4],[6,4]]}]} },
+
+
+  { name:"Maze 09 — 4×4 Unreachable", data:{"config":{"rows":4,"columns":4,"battery_capacity":2147483647},"start":[0,0],"end":[3,0],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[1,0],[1,1],[1,2],[1,3],[2,0],[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3]],"charging_stations":[],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[0,2],[0,3]]},{"between":[[0,3],[0,4]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[0,3],[1,3]]},{"between":[[1,3],[1,4]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[2,0],[2,1]]},{"between":[[2,1],[2,2]]},{"between":[[2,3],[2,4]]},{"between":[[2,0],[3,0]]},{"between":[[3,-1],[3,0]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[3,3],[3,4]]},{"between":[[3,0],[4,0]]},{"between":[[3,1],[4,1]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]}]} },
+
+
+  { name:"Maze 10 — 2×5 Insufficient Charge", data:{"config":{"rows":2,"columns":5,"battery_capacity":2},"start":[0,0],"end":[0,4],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4]],"charging_stations":[[1,4],[1,0],[0,3],[1,3]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[1,4],[1,5]]},{"between":[[1,0],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[1,4],[2,4]]}]} },
+
+];
+
+function mazeThumbnail(data) {
+  const rows = data.config?.rows || 4;
+  const cols = data.config?.columns || 4;
+  const S = 130, pad = 5;
+  const cellW = (S - pad*2) / cols;
+  const cellH = (S - pad*2) / rows;
+  const activeCells = new Set((data.active_cells||[]).map(c=>`${c[0]},${c[1]}`));
+  const chargeSt    = new Set((data.charging_stations||[]).map(c=>`${c[0]},${c[1]}`));
+  const startKey = data.start ? `${data.start[0]},${data.start[1]}` : null;
+  const endKey   = data.end   ? `${data.end[0]},${data.end[1]}`   : null;
+
+  const COL_ACTIVE   = '#e2e8f0';
+  const COL_INACTIVE = '#475569';
+  const COL_BG       = '#1e293b';
+  const COL_BORDER   = '#475569';
+  const COL_WALL     = '#fb923c';
+
+  let out = `<svg viewBox="0 0 ${S} ${S}" xmlns="http://www.w3.org/2000/svg">`;
+  out += `<rect width="${S}" height="${S}" fill="${COL_BG}" rx="3"/>`;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const key = `${r},${c}`;
+      const x = +(pad + c * cellW).toFixed(2);
+      const y = +(pad + r * cellH).toFixed(2);
+      const w2 = +cellW.toFixed(2), h2 = +cellH.toFixed(2);
+      const isActive = activeCells.has(key);
+      out += `<rect x="${x}" y="${y}" width="${w2}" height="${h2}" fill="${isActive ? COL_ACTIVE : COL_INACTIVE}"/>`;
+      const cx = +(x + cellW/2).toFixed(2), cy = +(y + cellH/2).toFixed(2);
+      const ri = +(Math.min(cellW, cellH) * 0.28).toFixed(2);
+      if (key === startKey)    out += `<circle cx="${cx}" cy="${cy}" r="${ri}" fill="#3b82f6"/>`;
+      if (key === endKey)      out += `<circle cx="${cx}" cy="${cy}" r="${ri}" fill="#ef4444"/>`;
+      if (chargeSt.has(key))  out += `<circle cx="${cx}" cy="${cy}" r="${ri}" fill="#22c55e"/>`;
+    }
+  }
+
+  
+  (data.walls||[]).forEach(w => {
+    const [[r1,c1],[r2,c2]] = w.between;
+    const wt = Math.max(2, Math.min(cellW, cellH) * 0.2).toFixed(1);
+    if (r1 === r2) {
+      const mc = Math.max(c1,c2);
+      const x  = +(pad + mc * cellW).toFixed(2);
+      const y1 = +(pad + r1 * cellH).toFixed(2);
+      const y2 = +(pad + (r1+1) * cellH).toFixed(2);
+      out += `<line x1="${x}" y1="${y1}" x2="${x}" y2="${y2}" stroke="${COL_WALL}" stroke-width="${wt}" stroke-linecap="round"/>`;
+    } else {
+      const mr = Math.max(r1,r2);
+      const y  = +(pad + mr * cellH).toFixed(2);
+      const x1 = +(pad + c1 * cellW).toFixed(2);
+      const x2 = +(pad + (c1+1) * cellW).toFixed(2);
+      out += `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${COL_WALL}" stroke-width="${wt}" stroke-linecap="round"/>`;
+    }
+  });
+
+  out += `<rect x="${pad}" y="${pad}" width="${+(S-pad*2).toFixed(2)}" height="${+(S-pad*2).toFixed(2)}" fill="none" stroke="${COL_BORDER}" stroke-width="1"/>`;
+  out += `</svg>`;
+  return out;
+}
+
+function openGallery() {
+  document.getElementById('gallery-overlay').classList.add('open');
+  renderGallery();
+}
+
+function closeGallery() {
+  document.getElementById('gallery-overlay').classList.remove('open');
+}
+
+function renderGallery() {
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = '';
+
+  mazeLibrary.forEach(({ name, data }) => {
+    const rows   = data.config?.rows || '?';
+    const cols   = data.config?.columns || '?';
+    const bat    = data.config?.battery_capacity;
+    const batLbl = (!bat || bat > 1000000) ? '∞' : bat;
+    const charges = (data.charging_stations||[]).length;
+
+    const card = document.createElement('div');
+    card.className = 'mcard';
+    card.innerHTML = `
+      ${mazeThumbnail(data)}
+      <div class="mcard-name">${name}</div>
+      <div class="mcard-meta">${rows}×${cols} · bat ${batLbl}${charges ? ` · ⚡${charges}` : ''}</div>
+    `;
+    card.addEventListener('click', () => { loadGalleryMaze(data); closeGallery(); });
+    grid.appendChild(card);
+  });
+}
+
+function loadGalleryMaze(data) {
+  animCancel = true;
+  hideRover();
+  clearCanvas();
+  currentPath = null;
+  startCell = null; endCell = null; chargeCells.clear();
+  if (data.config) {
+    if (data.config.rows)    document.getElementById('rows').value = data.config.rows;
+    if (data.config.columns) document.getElementById('cols').value = data.config.columns;
+    if (data.config.battery_capacity && data.config.battery_capacity < 1000000)
+      document.getElementById('battery-cap').value = data.config.battery_capacity;
+  }
+  generateGrid(false);
+  applyResponseData(data);
+  document.getElementById('path-status').innerHTML = `<span class="status-success">✔ Maze loaded — click SOLVE ▶ to run.</span>`;
+  document.getElementById('path-route').textContent = 'Maze loaded. Click SOLVE ▶ to find a path.';
+}
+/*
+
+    data:{config:{rows:4,columns:4,battery_capacity:5},start:[0,0],end:[0,3],robot_direction:"east",
+      active_cells:[[0,0],[0,1],[0,2],[0,3]],charging_stations:[],walls:[]} },
+  { name:"L-Turn",
+    data:{config:{rows:4,columns:4,battery_capacity:8},start:[0,0],end:[3,3],robot_direction:"south",
+      active_cells:[[0,0],[1,0],[2,0],[3,0],[3,1],[3,2],[3,3]],charging_stations:[],walls:[]} },
+  { name:"S-Curve",
+    data:{config:{rows:5,columns:4,battery_capacity:12},start:[0,0],end:[4,3],robot_direction:"east",
+      active_cells:[[0,0],[0,1],[0,2],[1,2],[2,2],[2,1],[2,0],[3,0],[4,0],[4,1],[4,2],[4,3]],charging_stations:[],walls:[]} },
+  { name:"T-Junction",
+    data:{config:{rows:4,columns:5,battery_capacity:8},start:[0,2],end:[3,4],robot_direction:"south",
+      active_cells:[[0,2],[1,0],[1,1],[1,2],[1,3],[1,4],[2,4],[3,4]],charging_stations:[],walls:[]} },
+  { name:"Pit Stop Required",
+    data:{config:{rows:6,columns:4,battery_capacity:5},start:[0,0],end:[5,3],robot_direction:"south",
+      active_cells:[[0,0],[1,0],[2,0],[2,1],[2,2],[2,3],[3,3],[4,3],[5,3]],charging_stations:[[2,1]],walls:[]} },
+  { name:"U-Turn",
+    data:{config:{rows:5,columns:3,battery_capacity:10},start:[0,0],end:[0,2],robot_direction:"south",
+      active_cells:[[0,0],[1,0],[2,0],[3,0],[4,0],[4,1],[4,2],[3,2],[2,2],[1,2],[0,2]],charging_stations:[],walls:[]} },
+  { name:"Cross Roads",
+    data:{config:{rows:5,columns:5,battery_capacity:10},start:[2,0],end:[0,2],robot_direction:"east",
+      active_cells:[[0,2],[1,2],[2,0],[2,1],[2,2],[2,3],[2,4],[3,2],[4,2]],charging_stations:[],walls:[]} },
+  { name:"Snake Run",
+    data:{config:{rows:6,columns:4,battery_capacity:16},start:[0,0],end:[5,3],robot_direction:"east",
+      active_cells:[[0,0],[0,1],[0,2],[0,3],[1,3],[2,3],[2,2],[2,1],[2,0],[3,0],[4,0],[4,1],[4,2],[4,3],[5,3]],charging_stations:[],walls:[]} },
+  { name:"Long Haul",
+    data:{config:{rows:3,columns:8,battery_capacity:5},start:[0,0],end:[2,7],robot_direction:"east",
+      active_cells:[[0,0],[0,1],[0,2],[0,3],[1,3],[2,3],[2,4],[2,5],[2,6],[2,7]],charging_stations:[[0,2]],walls:[]} },
+  { name:"Double Charge",
+    data:{config:{rows:8,columns:4,battery_capacity:4},start:[0,0],end:[7,3],robot_direction:"south",
+      active_cells:[[0,0],[1,0],[2,0],[3,0],[3,1],[3,2],[3,3],[4,3],[5,3],[6,3],[6,2],[6,1],[6,0],[7,0],[7,1],[7,2],[7,3]],charging_stations:[[1,0],[5,3]],walls:[]} },
+  { name:"Open Field",
+    data:{config:{rows:5,columns:5,battery_capacity:15},start:[0,0],end:[4,4],robot_direction:"east",
+      active_cells:[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4],[3,0],[3,1],[3,2],[3,3],[3,4],[4,0],[4,1],[4,2],[4,3],[4,4]],charging_stations:[],walls:[]} },
+  { name:"Island Chain",
+    data:{config:{rows:5,columns:5,battery_capacity:10},start:[0,0],end:[4,4],robot_direction:"east",
+      active_cells:[[0,0],[0,1],[1,1],[1,2],[2,2],[2,3],[3,3],[3,4],[4,4]],charging_stations:[],walls:[]} },
+  { name:"Walled Garden",
+    data:{config:{rows:4,columns:4,battery_capacity:10},start:[0,0],end:[3,3],robot_direction:"south",
+      active_cells:[[0,0],[0,1],[0,2],[0,3],[1,0],[1,1],[1,2],[1,3],[2,0],[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3]],
+      charging_stations:[],
+      walls:[{between:[[0,1],[0,2]]},{between:[[1,0],[1,1]]},{between:[[1,2],[1,3]]},{between:[[2,1],[2,2]]},{between:[[1,2],[2,2]]},{between:[[2,2],[3,2]]}]} },
+  { name:"Quick Sprint",
+    data:{config:{rows:3,columns:5,battery_capacity:6},start:[1,0],end:[1,4],robot_direction:"east",
+      active_cells:[[0,2],[1,0],[1,1],[1,2],[1,3],[1,4],[2,2]],charging_stations:[],walls:[]} },
+
+*/
+window.onload = () => generateGrid(true);
+window.addEventListener('resize', () => { calculateScaling(); if(currentPath) drawPath(currentPath); });
+</script>
+</body>
+</html>
