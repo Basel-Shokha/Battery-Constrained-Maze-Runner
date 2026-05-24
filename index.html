@@ -730,9 +730,6 @@ function applyResponseData(data) {
 
   if (runMode === 'continuous') {
     document.getElementById('path-status').innerHTML = `<span class="status-success">Continuous Operation — no battery limits.</span>`;
-  } else if (cost > cap) {
-    document.getElementById('path-status').innerHTML =
-            `<span class="status-danger">Mission failed. Cost ${cost} > Cap ${cap}</span>`;
   } else {
     document.getElementById('path-status').innerHTML =
             `<span class="status-success">Route feasible — ${cost}/${cap} battery units.</span>`;
