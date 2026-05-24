@@ -732,7 +732,7 @@ function applyResponseData(data) {
     document.getElementById('path-status').innerHTML = `<span class="status-success">Continuous Operation — no battery limits.</span>`;
   } else {
     document.getElementById('path-status').innerHTML =
-            `<span class="status-success">Route feasible — ${cost}/${cap} battery units.</span>`;
+            `<span class="status-success">Route feasible — ${cost}/${cap} energy units.</span>`;
   }
 
   drawPath(steps);
