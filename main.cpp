@@ -4,6 +4,31 @@
 
 using nlohmann::json;
 
+
+// Add this global variable near the top of main.cpp
+std::string latest_maze_json = "{}";
+
+// Inside main(), right next to your existing svr.Post("/solve", ...) endpoint:
+svr.Options("/send_maze", [](const httplib::Request&, httplib::Response& res) {
+    res.set_header("Access-Control-Allow-Origin",  "*");
+    res.set_header("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.set_header("Access-Control-Allow-Headers", "Content-Type");
+    res.status = 204;
+});
+
+svr.Post("/send_maze", [](const httplib::Request& req, httplib::Response& res) {
+    res.set_header("Access-Control-Allow-Origin", "*");
+    latest_maze_json = req.body; // Store the raw layout data
+    std::cout << "[SERVER] New maze configuration cached from Chrome.\n";
+    res.set_content("{\"status\":\"stored\"}", "application/json");
+});
+
+svr.Get("/get_maze", [](const httplib::Request&, httplib::Response& res) {
+    res.set_header("Access-Control-Allow-Origin", "*");
+    res.set_content(latest_maze_json, "application/json");
+});
+
+
 int main() {
     httplib::Server svr;
 
