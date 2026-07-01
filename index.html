@@ -156,6 +156,8 @@ button:hover{filter:brightness(0.9);}
 
     <!-- Solve -->
     <button class="btn-solve" id="solve-btn" onclick="solve()">SOLVE ▶</button>
+    <!-- Inside the topbar div, right next to the SOLVE button -->
+    <button class="btn-solve" id="send-btn" onclick="sendMazeToM5()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">SEND TO M5 ⬆</button>
     <span id="step-badge">step 0</span>
 
     <button onclick="openGallery()">📂 Mazes</button>
@@ -216,6 +218,28 @@ let animRunning = false;
 let animCancel = false;
 let runMode = 'mission';
 
+
+// Add this function alongside your other script blocks
+async function sendMazeToM5() {
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true; btn.textContent = 'SENDING…';
+
+  const req = buildRequestJSON(); // Wraps up your configured layout payload
+
+  try {
+    const res = await fetch('http://localhost:8080/send_maze', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(req)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    document.getElementById('path-status').innerHTML = `<span class="status-success">✔ Maze configuration sent to server queue!</span>`;
+  } catch (err) {
+    document.getElementById('path-status').innerHTML = `<span class="status-danger">⚠ Transmission failed: ${err.message}</span>`;
+  }
+
+  btn.disabled = false; btn.textContent = 'SEND TO M5 ⬆';
+}
 function setRunMode(mode) {
   runMode = mode;
   const btnMission = document.getElementById('run-mission');
