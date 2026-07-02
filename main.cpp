@@ -57,8 +57,7 @@ int main() {
             res.set_content(err.dump(), "application/json");
         }
     });
-
-    std::cout << "Maze solver listening at http://localhost:8080\n";
+    std::cout << "Maze solver listening at http://localhost:8085\n";
 
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
         std::ifstream f("index.html");
@@ -67,6 +66,10 @@ int main() {
         res.set_content(html, "text/html");
     });
 
-    svr.listen("0.0.0.0", 8080);
+    if (!svr.listen("0.0.0.0", 8085)) {
+        std::cerr << "\n[CRITICAL ERROR] Server failed to bind to port 8085!\n";
+        return 1;
+    }
 }
+
 
