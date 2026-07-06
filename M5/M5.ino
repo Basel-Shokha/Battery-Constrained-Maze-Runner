@@ -89,6 +89,9 @@ const char* getDirectionName(Direction dir) {
   return "UNKNOWN";
 }
 
+
+
+
 void setup() {
   M5.begin(); Serial.begin(115200); Wire.begin(0, 26); 
   initPeripheralUART(); 
@@ -108,6 +111,8 @@ void loop() {
 
   receivePeripheralTelemetry();
   handlePCNetworking(now);
+
+
 
   if (state == 1) {
     // ── FOOLPROOF TIMING LATCH FOR LEG CHANGEOVERS ──────────
@@ -305,4 +310,3 @@ void loop() {
   }
   delay(2);
 }
-

@@ -19,7 +19,7 @@ extern void sendPeripheralCmd(int commandId, int param1, int param2);
 
 const char* WIFI_SSID   = "A";
 const char* WIFI_PASS   = "00000000";
-const char* SERVER_IP   = "192.168.137.1";
+const char* SERVER_IP   = "192.168.137.212";
 const char* SERVER_PORT = "8085";
 
 unsigned long lastPcStreamTime       = 0;
@@ -143,10 +143,35 @@ void pollInstructionsFromServer() {
     http.end();
 }
 
+
+void pollCalibrationRequest() {
+    if (WiFi.status() != WL_CONNECTED) return;
+    HTTPClient http;
+    char url[128];
+    sprintf(url, "http://%s:%s/get_calibrate", SERVER_IP, SERVER_PORT);
+    http.begin(url);
+    if (http.GET() == HTTP_CODE_OK) {
+        String payload = http.getString();
+        if (payload.indexOf("\"calibrate\":true") >= 0) {
+            extern void calibrateGyro();
+            M5.Lcd.fillScreen(BLACK);
+            M5.Lcd.setTextColor(YELLOW);
+            M5.Lcd.println("Calibrating Gyro...");
+            calibrateGyro();
+            M5.Lcd.fillScreen(BLACK);
+            sendPCNotification("GYRO_CALIBRATED_ACK", 1);
+        }
+    }
+    http.end();
+}
+
+
 void handlePCNetworking(unsigned long now) {
     if (state == 0 && (now - lastInstructionPollTime >= 1500)) {
         lastInstructionPollTime = now;
         pollInstructionsFromServer();
+        pollCalibrationRequest();
+
     }
     streamTelemetryToPC(now);
 }
@@ -156,4 +181,3 @@ void triggerNetworkAlert(int conditionId) {
         sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_ROUTE_ERROR, 0);
     }
 }
-
