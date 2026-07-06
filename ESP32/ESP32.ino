@@ -1,96 +1,167 @@
-#include <Arduino.h>
-#include <Wire.h>
-#include <VL53L1X.h>
+// ============================================================
+//  ESP32.ino — CLEAN REWRITE: Master Core Parser & Execution
+// ============================================================
+#include "PROTOCOL.h"
+#include <Adafruit_NeoPixel.h>
 
-// ── CONFIGURATION MODULE TOGGLES ──────────────────────────
-#define DEACTIVATE_SENSORS   0   // SET TO 1 TO BYPASS MISSING HARDWARE DURING BENCH TESTING
-#define USE_ARGENTINA_FLAG   1   // Set to 1 for Argentina, 0 for Brazil Layout
-#define USE_BRAZIL_FLAG      0   // Set to 1 for Brazil, 0 for Argentina Layout
+#define TOTAL_NUM_PIXELS 16
 
-// ── PHYSICAL SENSOR XSHUT PINS ────────────────────────────
-#define XSHUT_1 5   // Left Sensor Pin
-#define XSHUT_2 23  // Front Sensor Pin
-#define XSHUT_3 18  // Right Sensor Pin
-
-// Hardware Serial 2 maps to internal pins RX=16, TX=17
 HardwareSerial M5Serial(2);
 
-VL53L1X sensorLeft, sensorFront, sensorRight;
+// Global shared telemetry variables
 uint16_t distLeft = 0, distFront = 0, distRight = 0;
 unsigned long lastSendTime = 0;
 
-// Extern signatures pulled natively from separate compilation units (LED.ino, MP3.ino)
-extern void initLED(); extern void clearRing(); extern void setSinglePixel(uint8_t index, uint8_t r, uint8_t g, uint8_t b);
-extern void initMP3(); extern void setVolume(uint8_t volume); extern void playTrack(uint8_t directory, uint8_t trackNumber); extern bool resetMP3();
+// ── ORANGE BREATHING STATE ──────────────────────────────────
+unsigned long lastOrangeUpdateTime = 0;
+String inputBuffer = "";
 
-// ── PERMANENT HARDWARE VISUAL STATE INITIALIZER ───────────
-void turnOnMediaEngineAllTheTime() {
-    // Crank volume instantly and map flag layout EXACTLY ONCE here
-    setVolume(30); delay(50); playTrack(1, 1); delay(50);
-    clearRing();
-    
-    #if USE_ARGENTINA_FLAG
-        for (int i = 0; i < 16; i++) {
-            if (i <= 3)       setSinglePixel(i, 0, 30, 90);     // Pixels 0-3: Deep Royal Blue
-            else if (i <= 6)  setSinglePixel(i, 90, 90, 90);    // Pixels 4-6: White
-            else if (i <= 8)  setSinglePixel(i, 110, 80, 0);    // Pixels 7-8: Golden Sun
-            else if (i <= 11) setSinglePixel(i, 90, 90, 90);    // Pixels 9-11: White
-            else              setSinglePixel(i, 0, 30, 90);     // Pixels 12-15: Deep Royal Blue
-        }
-    #endif
+// ── EXTERN SIGNATURES FROM OTHER TABS ───────────────────────
+// From LED.ino
+extern void initLED();
+extern void clearRing();
+extern void setRingColor(uint8_t r, uint8_t g, uint8_t b);
+extern void setSinglePixel(uint8_t index, uint8_t r, uint8_t g, uint8_t b);
 
-    #if USE_BRAZIL_FLAG
-        for (int i = 0; i < 16; i++) {
-            if (i <= 3)       setSinglePixel(i, 0, 110, 0);     // Pixels 0-3: Green
-            else if (i <= 6)  setSinglePixel(i, 110, 80, 0);    // Pixels 4-6: Yellow
-            else if (i <= 8)  setSinglePixel(i, 0, 0, 110);     // Pixels 7-8: Blue
-            else if (i <= 11) setSinglePixel(i, 110, 80, 0);    // Pixels 9-11: Yellow
-            else              setSinglePixel(i, 0, 110, 0);     // Pixels 12-15: Green
-        }
-    #endif
-}
+// From MP3.ino
+extern void initMP3();
+extern void setVolume(uint8_t volume);
+extern void playTrack(uint8_t directory, uint8_t trackNumber);
+extern bool resetMP3();
+
+// From SENSORS.ino
+extern void initSensors();
+extern void readSensors();
+
+// From RECHARGING_LOGIC.ino
+extern void runRechargingMode();
+
+// Forward declarations for local functions
+void parsePacket(String inLine);
+void updateOrangeBreathing(unsigned long now);
 
 void setup() {
     Serial.begin(115200);
-    initLED(); initMP3();
-    turnOnMediaEngineAllTheTime(); // Fire visuals/audio and latch state immediately
+    
+    Serial.println("\n[ESP32] Initializing Master Core Architecture...");
+    
+    // Initialize external hardware tabs
+    initLED(); 
+    initMP3();     // Has its own delay(1200) internally for SD indexing - unavoidable
+    initSensors(); 
 
-#if !DEACTIVATE_SENSORS
-    Wire.begin(21, 22); Wire.setClock(400000); 
-    pinMode(XSHUT_1, OUTPUT); pinMode(XSHUT_2, OUTPUT); pinMode(XSHUT_3, OUTPUT);
-    digitalWrite(XSHUT_1, LOW); digitalWrite(XSHUT_2, LOW); digitalWrite(XSHUT_3, LOW); delay(10);
-    digitalWrite(XSHUT_1, HIGH); delay(10); sensorLeft.init();  sensorLeft.setAddress(0x30);
-    digitalWrite(XSHUT_2, HIGH); delay(10); sensorFront.init(); sensorFront.setAddress(0x31);
-    digitalWrite(XSHUT_3, HIGH); delay(10); sensorRight.init(); sensorRight.setAddress(0x32);
-    sensorLeft.startContinuous(50); sensorFront.startContinuous(50); sensorRight.startContinuous(50);
-#endif
-
+    setVolume(30);
+    
+    // Light up orange IMMEDIATELY on boot, no extra delay
+    setRingColor(200, 60, 0);
+    lastOrangeUpdateTime = millis();
+    
     M5Serial.begin(115200, SERIAL_8N1, 16, 17);
-    Serial.println("[ESP32] Core initialized. Media locked ON. ToF operational.");
+    Serial.println("[ESP32] Core operational. Ready for commands from M5.");
 }
 
 void loop() {
     unsigned long now = millis();
 
-#if !DEACTIVATE_SENSORS
-    // ── ASYNCHRONOUS LASER READINGS ──
-    if (sensorLeft.dataReady())  distLeft  = sensorLeft.read(false);
-    if (sensorFront.dataReady()) distFront = sensorFront.read(false);
-    if (sensorRight.dataReady()) distRight = sensorRight.read(false);
+    // Run idle orange breathing loop when not charging
+    updateOrangeBreathing(now);
 
-    // ── STREAM SENSORS TO M5 OVER UART (Every 60ms structured ASCII) ──
+    // ── Read ToF Laser Distance Sensors ─────────────────────────
+    readSensors();
     if (now - lastSendTime >= 60) {
         lastSendTime = now;
         M5Serial.printf("DIST:%d,%d,%d\n", distLeft, distFront, distRight);
     }
-#endif
 
-    // ── PROCESS INCOMING CONTROL INPUT FROM M5 stick UART pipeline ──────
-    if (M5Serial.available() > 0) {
-        String command = M5Serial.readStringUntil('\n'); command.trim();
-        if (command.length() == 0) return;
-        if (command == "AUDIO_STOP") { resetMP3(); } 
-        else if (command == "AUDIO_PLAY") { setVolume(30); playTrack(1, 1); }
-        else if (command.startsWith("VOL_")) { setVolume(command.substring(4).toInt()); }
+    // ── Parse incoming command packets from M5 ───────────────────
+    while (M5Serial.available() > 0) {
+        char c = M5Serial.read();
+        if (c == '\n') {
+            if (inputBuffer.length() > 0) {
+                parsePacket(inputBuffer);
+            }
+            inputBuffer = ""; 
+        } else if (c != '\r') {
+            inputBuffer += c; 
+        }
+    }
+}
+
+// ============================================================
+//  ORANGE BREATHING: Smooth sinusoidal fade (5 second cycle)
+// ============================================================
+void updateOrangeBreathing(unsigned long now) {
+    if (now - lastOrangeUpdateTime >= 20) {
+        lastOrangeUpdateTime = now;
+        
+        float angle = (float)(now % 5000) * (2.0f * M_PI / 5000.0f);
+        float factor = (sinf(angle) + 1.0f) / 2.0f;
+        
+        uint8_t redValue   = 50 + (uint8_t)(factor * 150.0f);
+        uint8_t greenValue = 20 + (uint8_t)(factor * 60.0f);
+        
+        setRingColor(redValue, greenValue, 0);
+    }
+}
+
+// ============================================================
+//  COMMAND PARSER: Handle incoming PACKET strings from M5
+// ============================================================
+void parsePacket(String inLine) {
+    inLine.trim();
+    
+    if (!inLine.startsWith("PACKET:")) {
+        return;
+    }
+    
+    int cmdId = 0, p1 = 0, p2 = 0;
+    if (sscanf(inLine.c_str(), "PACKET:%d,%d,%d", &cmdId, &p1, &p2) != 3) {
+        Serial.println("[PARSE] Invalid packet format");
+        return;
+    }
+    
+    Serial.printf("[PARSE] Command ID: %d, P1: %d, P2: %d\n", cmdId, p1, p2);
+    
+    // ── PLAY AUDIO ──────────────────────────────────────────────
+    if (cmdId == CMD_PLAY_AUDIO) {
+        setVolume(30);
+        delay(10);
+        int trackNumber = p1 - 100;  // 101 -> Track 1, 102 -> Track 2, etc.
+        if (trackNumber >= 1 && trackNumber <= 5) {
+            playTrack(1, trackNumber);
+        }
+    }
+    
+    // ── STOP AUDIO ──────────────────────────────────────────────
+    else if (cmdId == CMD_STOP_AUDIO) {
+        resetMP3();
+    }
+    
+    // ── START CHARGING (Triggered by M5 Button A) ────────────────
+    else if (cmdId == CMD_START_CHARGE) {
+        Serial.println("[CHARGE] M5 Button A pressed!");
+        
+        // Runs the full animation + audio cycle from RECHARGING_LOGIC.ino
+        // (audio is fired internally inside runRechargingMode - no need to call it here)
+        runRechargingMode();
+        
+        // Reset breathing timer so idle animation resumes smoothly
+        lastOrangeUpdateTime = millis();
+    }
+    
+    // ── BATTERY UPDATE (Show percentage as green bar) ───────────
+    else if (cmdId == CMD_BATTERY_UPDATE) {
+        int greenLeds = (p1 * TOTAL_NUM_PIXELS) / p2;
+        if (greenLeds > TOTAL_NUM_PIXELS) greenLeds = TOTAL_NUM_PIXELS;
+        if (greenLeds < 0)                 greenLeds = 0;
+        
+        clearRing();
+        for (int i = 0; i < TOTAL_NUM_PIXELS; i++) {
+            if (i < greenLeds) {
+                setSinglePixel(i, 0, 150, 0);
+            } else {
+                setSinglePixel(i, 0, 0, 0);
+            }
+        }
     }
 }
