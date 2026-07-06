@@ -29,7 +29,7 @@ struct MovementStep {
 };
 
 Direction initialSpawnDirection = EAST;
-Direction currentRobotDirection = EAST; // ── NEW: TRACKS COMPASS DIRECTION LATCH RELATIVELY ──
+Direction currentRobotDirection = EAST; 
 MovementStep missionPipeline[50];
 uint8_t totalMissionSteps       = 0;
 int8_t activeStepIndex          = -1;
@@ -53,7 +53,7 @@ volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
 unsigned long settleTimer    = 0;
-int16_t baselineSpeed        = 45; 
+int16_t baselineSpeed        = 20; 
 
 unsigned long lastStuckCheckTime = 0;
 float lastStuckCheckYaw          = 0.0f;
@@ -66,7 +66,7 @@ extern void walkForward();
 extern void resetSpeedHistory();
 extern void processParallelAlignment(unsigned long now, unsigned long &lastSampleTime);
 extern float angleDiff(float target, float current);
-extern float wrap360(float a); // Link to gyroscope tab utility
+extern float wrap360(float a); 
 
 extern void connectWiFi();
 extern void handlePCNetworking(unsigned long now);
@@ -112,14 +112,6 @@ void loop() {
   handlePCNetworking(now);
 
   if (state == 1) {
-    // ── FOOLPROOF TIMING LATCH FOR LEG CHANGEOVERS ──────────
-    if (activeStepIndex != lastStepIndex) {
-        stepStartTime = now;
-        lastStepIndex = activeStepIndex;
-        isStrafingLeft = false;
-        isStrafingRight = false;
-    }
-
     // ── GLOBAL SIDE-WALL GUARD (BYPASSES GYRO ENTIRELY) ──
     if (!isStrafingLeft && !isStrafingRight) {
         if (s_left > 0 && s_left <= 50) { 
@@ -151,11 +143,20 @@ void loop() {
     switch (currentPhase) {
       
       case WALKING_FWD: {
+        // ── FIXED LATCH: STARTS THE TIMER ONLY WHEN WE ACTUALLY BEGIN DRIVING ──
+        if (activeStepIndex != lastStepIndex) {
+            stepStartTime = now;
+            lastStepIndex = activeStepIndex;
+            isStrafingLeft = false;
+            isStrafingRight = false;
+        }
+
         processParallelAlignment(now, lastSampleTime);
         if (activeStepIndex >= 0 && activeStepIndex < totalMissionSteps) {
           MovementStep currentLeg = missionPipeline[activeStepIndex];
           uint16_t stopThresholdMm = (currentLeg.stopLimitGrids * 300) + 150;
 
+          // ── CORRECT TIME METRIC: GRIDS * 1500ms RUNS PURELY ON CORRIDOR DRIVE START ──
           unsigned long blindSpotDuration = currentLeg.gridsToCross * 1500;
           bool isBlindSpotActive = (now - stepStartTime < blindSpotDuration);
 
@@ -174,7 +175,7 @@ void loop() {
               goto targetTurnCalculation;
             }
           } else {
-            walkForward(); // Invokes Argentina tracking lines
+            walkForward(); 
           }
         }
         break;
@@ -228,7 +229,6 @@ void loop() {
         MovementStep nextLeg = missionPipeline[activeStepIndex];
 
         if (currentPhase != TURNING) {
-            // Initial path spawn sync check
             if (activeStepIndex == 0) {
                 currentRobotDirection = initialSpawnDirection;
             }
@@ -236,18 +236,16 @@ void loop() {
             Direction nextDir = nextLeg.orientation;
             float relativeAngleDelta = 0.0f;
 
-            // ── EXPLICIT RELATIVE DIRECTIONS — 3 IFS ONLY ──
             if ((currentRobotDirection + 1) % 4 == nextDir) {
-                relativeAngleDelta = 90.0f;  // Turn Right
+                relativeAngleDelta = 90.0f;  
             } 
             else if ((currentRobotDirection + 2) % 4 == nextDir) {
-                relativeAngleDelta = 180.0f; // U-Turn
+                relativeAngleDelta = 180.0f; 
             } 
             else if ((currentRobotDirection + 3) % 4 == nextDir) {
-                relativeAngleDelta = -90.0f; // Turn Left
+                relativeAngleDelta = -90.0f; 
             }
 
-            // DEDUCTS TARGET FROM THE EXACT CURRENT DRIFTING YAW INDEX VALUE
             turnTargetYaw = wrap360(yaw + relativeAngleDelta);
 
             sendPCNotification("TURNING_START", (int)turnTargetYaw);
@@ -273,7 +271,7 @@ void loop() {
           lastStuckCheckYaw = yaw; lastStuckCheckTime = now;
         }
 
-        int8_t baseTurningSpeed = (int8_t)constrain(absErr * 0.5f + 18, 18, 20);
+        int8_t baseTurningSpeed = (int8_t)constrain(absErr * 0.5f + 10, 10, 10);
         int8_t finalizedSpeed   = baseTurningSpeed + antiStuckSpeedBoost;
 
         if (error > 0) setMotors(finalizedSpeed, -finalizedSpeed, finalizedSpeed, -finalizedSpeed);
@@ -288,7 +286,6 @@ void loop() {
           targetHeading = turnTargetYaw;
           sendPCNotification("TURN_CONFIRMED_ACK", (int)targetHeading);
           
-          // ── SYNC LOGICAL COMPASS REGISTER ON COMPLETED TURN PROFILE ──
           currentRobotDirection = missionPipeline[activeStepIndex].orientation;
 
           resetSpeedHistory(); lastSampleTime = millis();
@@ -326,4 +323,3 @@ void loop() {
   }
   delay(2);
 }
-

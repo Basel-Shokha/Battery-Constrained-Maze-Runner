@@ -28,9 +28,27 @@ void initSensors() {
     delay(10);
     
     // Incrementally wake up sensors and reassign unique dynamic I2C hardware addresses
-    digitalWrite(XSHUT_1, HIGH); delay(10); sensorL.init(); sensorL.setAddress(0x30);
-    digitalWrite(XSHUT_2, HIGH); delay(10); sensorF.init(); sensorF.setAddress(0x31);
-    digitalWrite(XSHUT_3, HIGH); delay(10); sensorR.init(); sensorR.setAddress(0x32);
+    
+    // --- Left Sensor ---
+    digitalWrite(XSHUT_1, HIGH); delay(10); 
+    sensorL.init(); 
+    sensorL.setAddress(0x30);
+    sensorL.setROISize(4, 4);          // Narrows FoV to 15 degrees
+    sensorL.setDistanceMode(VL53L1X::Short); // Short mode offers better stability with small ROIs
+
+    // --- Front Sensor ---
+    digitalWrite(XSHUT_2, HIGH); delay(10); 
+    sensorF.init(); 
+    sensorF.setAddress(0x31);
+    sensorF.setROISize(4, 4);          // Narrows FoV to 15 degrees
+    sensorF.setDistanceMode(VL53L1X::Short);
+
+    // --- Right Sensor ---
+    digitalWrite(XSHUT_3, HIGH); delay(10); 
+    sensorR.init(); 
+    sensorR.setAddress(0x32);
+    sensorR.setROISize(4, 4);          // Narrows FoV to 15 degrees
+    sensorR.setDistanceMode(VL53L1X::Short);
     
     // Start asynchronous data collection loop at 50ms intervals
     sensorL.startContinuous(50);
@@ -44,4 +62,3 @@ void readSensors() {
     if (sensorF.dataReady()) distFront = sensorF.read(false);
     if (sensorR.dataReady()) distRight = sensorR.read(false);
 }
-
