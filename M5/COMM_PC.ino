@@ -1,78 +1,148 @@
-#include <M5StickCPlus.h>
+// ============================================================
+//  TAB 2: COMM_PC.ino — Wi-Fi Network & Server Interface
+// ============================================================
+#include <WiFi.h>
+#include <HTTPClient.h>
 
-// Mirror the structures we mapped out
-enum Direction : uint8_t { NORTH = 0, EAST = 1, SOUTH = 2, WEST = 3 };
-
-struct MovementStep {
-    Direction orientation;
-    uint8_t gridsToCross;
-    uint8_t expectedStartGrids;
-    uint8_t stopLimitGrids;
-};
-
-// Global shared variables exposed to the main loop
 extern Direction initialSpawnDirection;
 extern MovementStep missionPipeline[50];
 extern uint8_t totalMissionSteps;
 extern int8_t activeStepIndex;
+extern int state;
+extern enum DrivePhase currentPhase;
 
 extern volatile uint16_t s_left, s_front, s_right;
 extern float yaw;
-extern int state; // Reference to state machine index
+extern const int CMD_PLAY_AUDIO, AUDIO_MISSION_START, AUDIO_ROUTE_ERROR;
+extern void resetSpeedHistory();
+extern void sendPeripheralCmd(int commandId, int param1, int param2);
 
-unsigned long lastPcStreamTime = 0;
+const char* WIFI_SSID   = "A";
+const char* WIFI_PASS   = "00000000";
+const char* SERVER_IP   = "192.168.137.1";
+const char* SERVER_PORT = "8085";
 
-// ── STREAM TELEMETRY BACK TO PC EVERY 0.2 SECONDS ─────────
-void streamTelemetryToPC(unsigned long now, const char* stateLabel) {
-    if (now - lastPcStreamTime >= 200) { // Strict 0.2-second boundary clock
+unsigned long lastPcStreamTime       = 0;
+unsigned long lastInstructionPollTime = 0;
+
+void connectWiFi() {
+  M5.Lcd.setTextColor(CYAN); 
+  M5.Lcd.println("Connecting Wi-Fi...");
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(250); 
+    M5.Lcd.print("."); 
+  }
+  M5.Lcd.fillScreen(BLACK);
+}
+
+void streamTelemetryToPC(unsigned long now) {
+    if (now - lastPcStreamTime >= 200) { 
         lastPcStreamTime = now;
+        if (WiFi.status() != WL_CONNECTED) return;
         
-        // Format: TELEMETRY:step_idx,yaw,left,front,right,state_label
-        Serial.printf("TELEMETRY:%d,%05.1f,%d,%d,%d,%s\n", 
-                      activeStepIndex, 
-                      yaw, 
-                      s_left, 
-                      s_front, 
-                      s_right, 
-                      stateLabel);
+        HTTPClient http;
+        char url[128];
+        sprintf(url, "http://%s:%s/update_telemetry", SERVER_IP, SERVER_PORT);
+        http.begin(url);
+        http.addHeader("Content-Type", "application/json");
+
+        const char* stateLabel = (state == 1) ? "RUNNING" : "IDLE";
+        char jsonBuf[256];
+        sprintf(jsonBuf, "{\"stepIdx\":%d,\"yaw\":%.1f,\"left\":%d,\"front\":%d,\"right\":%d,\"state\":\"%s\"}",
+                activeStepIndex, yaw, s_left, s_front, s_right, stateLabel);
+
+        http.POST(jsonBuf);
+        http.end();
     }
 }
 
-// ── PARSE SERIAL COMMAND PACKETS FROM THE PC DISPATCHER ──
-void parseIncomingPcCommands() {
-    if (Serial.available() > 0) {
-        String line = Serial.readStringUntil('\n');
-        line.trim();
+void pollInstructionsFromServer() {
+    if (WiFi.status() != WL_CONNECTED) return;
 
-        if (line.startsWith("INIT_MISSION:")) {
-            // Expected: INIT_MISSION:spawn_dir,total_steps
-            int spawnDir, steps;
-            if (sscanf(line.c_str(), "INIT_MISSION:%d,%d", &spawnDir, &steps) == 2) {
-                initialSpawnDirection = (Direction)spawnDir;
-                totalMissionSteps = steps;
-                activeStepIndex = -1; // Ready to receive steps
-                Serial.println("STATUS:READY_FOR_STEPS");
-            }
+    HTTPClient http;
+    char url[128];
+    sprintf(url, "http://%s:%s/get_instructions", SERVER_IP, SERVER_PORT);
+    http.begin(url);
+
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        payload.trim();
+
+        if (payload.length() == 0 || payload.startsWith("START:1,0")) {
+            http.end();
+            return;
         }
-        else if (line.startsWith("M_STEP:")) {
-            // Expected: M_STEP:idx,orient,grids,expect,stop
-            int idx, orient, grids, expect, stop;
-            if (sscanf(line.c_str(), "M_STEP:%d,%d,%d,%d,%d", &idx, &orient, &grids, &expect, &stop) == 5) {
-                if (idx < 50) {
-                    missionPipeline[idx].orientation       = (Direction)orient;
-                    missionPipeline[idx].gridsToCross      = grids;
-                    missionPipeline[idx].expectedStartGrids = expect;
-                    missionPipeline[idx].stopLimitGrids    = stop;
-                    
-                    // Acknowledge receipt of step
-                    Serial.printf("STATUS:RCVD_%d\n", idx);
-                    
-                    // If we just received the final step, arm the engine
-                    if (idx == totalMissionSteps - 1) {
-                        Serial.println("STATUS:MISSION_ARMED");
+
+        static String lastPayload = "";
+        if (payload == lastPayload) {
+            http.end();
+            return;
+        }
+        lastPayload = payload;
+
+        int startIdx = 0;
+        totalMissionSteps = 0;
+
+        while (startIdx < payload.length()) {
+            int endIdx = payload.indexOf('\n', startIdx);
+            if (endIdx == -1) endIdx = payload.length();
+            String line = payload.substring(startIdx, endIdx);
+            line.trim();
+            startIdx = endIdx + 1;
+
+            if (line.startsWith("START:")) {
+                int spawn, steps;
+                if (sscanf(line.c_str(), "START:%d,%d", &spawn, &steps) == 2) {
+                    initialSpawnDirection = (Direction)spawn;
+                }
+            }
+            else if (line.startsWith("STEP:")) {
+                int idx, orient, grids, expect, stop, act;
+                if (sscanf(line.c_str(), "STEP:%d,%d,%d,%d,%d,%d", &idx, &orient, &grids, &expect, &stop, &act) == 6) {
+                    if (idx < 50) {
+                        missionPipeline[idx].orientation        = (Direction)orient;
+                        missionPipeline[idx].gridsToCross       = grids;
+                        missionPipeline[idx].expectedStartGrids = expect;
+                        missionPipeline[idx].stopLimitGrids     = stop;
+                        missionPipeline[idx].action             = act;
+                        totalMissionSteps++;
                     }
                 }
             }
         }
+
+        if (totalMissionSteps > 0) {
+            activeStepIndex = 0;
+            extern float targetHeading;
+            targetHeading = yaw; 
+            resetSpeedHistory(); 
+            currentPhase = WALKING_FWD;
+            
+            // ── TRIGGER 5-SECOND COUNTDOWN AUDIO DELAY BEFORE MOTOR ENGAGEMENT ──
+            sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_MISSION_START, 0); 
+            delay(5000); // Wait out the entire "3 2 1" audio track completely
+            
+            state = 1; 
+            M5.Lcd.fillScreen(BLACK);
+            Serial.println("STATUS:LAUNCHED_VIA_WIFI");
+        }
+    }
+    http.end();
+}
+
+void handlePCNetworking(unsigned long now) {
+    if (state == 0 && (now - lastInstructionPollTime >= 1500)) {
+        lastInstructionPollTime = now;
+        pollInstructionsFromServer();
+    }
+    streamTelemetryToPC(now);
+}
+
+// Network fallbacks error code slots
+void triggerNetworkAlert(int conditionId) {
+    if (conditionId == 404) {
+        sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_ROUTE_ERROR, 0); // 4.5s No route error
     }
 }
