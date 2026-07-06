@@ -52,7 +52,7 @@ volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
 unsigned long settleTimer    = 0;
-int16_t baselineSpeed        = 45; 
+int16_t baselineSpeed        = 30; 
 
 unsigned long lastStuckCheckTime = 0;
 float lastStuckCheckYaw          = 0.0f;

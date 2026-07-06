@@ -17,6 +17,18 @@ json globalTelemetryCache = {{"stepIdx",0},{"yaw",0.0},{"left",0},{"front",0},{"
 bool newMissionAvailable = false;
 bool calibrationRequested = false;
 
+void printM5Packet(const std::string& packet) {
+    std::cout << "\n========== PACKET SENT TO M5 ==========\n"
+              << packet;
+
+    // Keep the closing separator on its own line.
+    if (packet.empty() || packet.back() != '\n') {
+        std::cout << '\n';
+    }
+
+    std::cout << "=======================================\n" << std::flush;
+}
+
 
 
 std::string getHeadingLabel(int dir) {
@@ -83,7 +95,7 @@ int main() {
         try {
             json request = json::parse(req.body);
             std::string spawnDirStr = request["robot_direction"].get<std::string>();
-            int initialSpawnDirectionInt = 1; 
+            int initialSpawnDirectionInt = 1;
             if      (spawnDirStr == "north") initialSpawnDirectionInt = 0;
             else if (spawnDirStr == "south") initialSpawnDirectionInt = 2;
             else if (spawnDirStr == "west")  initialSpawnDirectionInt = 3;
@@ -156,7 +168,7 @@ int main() {
             // Stash structured configuration profile in memory pool (Await trigger execution button)
             rawM5InstructionString = textStream.str();
             latestMazeJson = request.dump();
-            newMissionAvailable = false; 
+            newMissionAvailable = false;
 
             res.set_content("{\"status\":\"stored\",\"feasible\":true}", "application/json");
         } catch (...) {
@@ -193,7 +205,7 @@ int main() {
         add_cors_headers(res);
         // Append execution command onto raw text segment
         rawM5InstructionString += "CMD:START_JOURNEY\n";
-        newMissionAvailable = true; 
+        newMissionAvailable = true;
         std::cout << "[SERVER HANDSHAKE] Start command logged. Sending execution cue to M5!\n";
         res.set_content("{\"status\":\"started\"}", "application/json");
     });
@@ -201,6 +213,7 @@ int main() {
     svr.Get("/get_instructions", [&](const httplib::Request&, httplib::Response& res) {
         res.set_content(rawM5InstructionString, "text/plain");
         if (newMissionAvailable) {
+            printM5Packet(rawM5InstructionString);
             std::cout << "[WIFI LINK] M5 Stick fetched solution array. Running now.\n";
             newMissionAvailable = false;
         }
@@ -251,4 +264,3 @@ int main() {
     svr.listen("0.0.0.0", 8085);
     return 0;
 }
-
