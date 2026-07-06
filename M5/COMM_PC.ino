@@ -1,5 +1,5 @@
 // ============================================================
-//  TAB 2: COMM_PC.ino — Wi-Fi Network & Server Interface
+//  TAB 2: COMM_PC.ino — Wi-Fi Network & Event Notification Hub
 // ============================================================
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -26,16 +26,13 @@ unsigned long lastPcStreamTime       = 0;
 unsigned long lastInstructionPollTime = 0;
 
 void connectWiFi() {
-  M5.Lcd.setTextColor(CYAN); 
-  M5.Lcd.println("Connecting Wi-Fi...");
+  M5.Lcd.setTextColor(CYAN); M5.Lcd.println("Connecting Wi-Fi...");
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) { 
-    delay(250); 
-    M5.Lcd.print("."); 
-  }
+  while (WiFi.status() != WL_CONNECTED) { delay(250); M5.Lcd.print("."); }
   M5.Lcd.fillScreen(BLACK);
 }
 
+// ── UNACKNOWLEDGED HIGH-FREQUENCY TELEMETRY OUTFLOW ─────────
 void streamTelemetryToPC(unsigned long now) {
     if (now - lastPcStreamTime >= 200) { 
         lastPcStreamTime = now;
@@ -57,6 +54,28 @@ void streamTelemetryToPC(unsigned long now) {
     }
 }
 
+// ── RULE 5: SERVER HANDSHAKE FOR EXPANDED DISCRETE WORK EVENTS ──
+void sendPCNotification(const char* eventType, int logValue) {
+    if (WiFi.status() != WL_CONNECTED) return;
+    
+    HTTPClient http;
+    char url[128];
+    sprintf(url, "http://%s:%s/notify_event", SERVER_IP, SERVER_PORT);
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+    
+    char jsonBuf[128];
+    sprintf(jsonBuf, "{\"event\":\"%s\",\"value\":%d}", eventType, logValue);
+    
+    int httpCode = http.POST(jsonBuf);
+    if (httpCode == HTTP_CODE_OK) {
+        Serial.printf("[PC-HANDSHAKE-ACK] Event processed successfully: %s\n", eventType);
+    } else {
+        Serial.printf("[PC-HANDSHAKE-FAIL] Server return error code: %d\n", httpCode);
+    }
+    http.end();
+}
+
 void pollInstructionsFromServer() {
     if (WiFi.status() != WL_CONNECTED) return;
 
@@ -71,28 +90,36 @@ void pollInstructionsFromServer() {
         payload.trim();
 
         if (payload.length() == 0 || payload.startsWith("START:1,0")) {
-            http.end();
-            return;
+            http.end(); return;
         }
 
         static String lastPayload = "";
-        if (payload == lastPayload) {
-            http.end();
-            return;
-        }
+        if (payload == lastPayload) { http.end(); return; }
         lastPayload = payload;
 
-        int startIdx = 0;
-        totalMissionSteps = 0;
-
+        int startIdx = 0; totalMissionSteps = 0;
         while (startIdx < payload.length()) {
             int endIdx = payload.indexOf('\n', startIdx);
             if (endIdx == -1) endIdx = payload.length();
             String line = payload.substring(startIdx, endIdx);
-            line.trim();
-            startIdx = endIdx + 1;
+            line.trim(); startIdx = endIdx + 1;
 
-            if (line.startsWith("START:")) {
+            // ── RULE 5: WIDER COMMAND CONTROLS (PC COMMANDS START JOURNEY) ──
+            if (line.startsWith("CMD:START_JOURNEY")) {
+                if (totalMissionSteps > 0 && state == 0) {
+                    activeStepIndex = 0;
+                    extern float targetHeading; targetHeading = yaw; 
+                    resetSpeedHistory(); currentPhase = WALKING_FWD;
+                    
+                    sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_MISSION_START, 0);
+                    delay(5000); 
+                    
+                    state = 1; M5.Lcd.fillScreen(BLACK);
+                    sendPCNotification("JOURNEY_STARTED_ACK", 1);
+                    Serial.println("STATUS:LAUNCHED_VIA_SERVER_CMD");
+                }
+            }
+            else if (line.startsWith("START:")) {
                 int spawn, steps;
                 if (sscanf(line.c_str(), "START:%d,%d", &spawn, &steps) == 2) {
                     initialSpawnDirection = (Direction)spawn;
@@ -112,22 +139,6 @@ void pollInstructionsFromServer() {
                 }
             }
         }
-
-        if (totalMissionSteps > 0) {
-            activeStepIndex = 0;
-            extern float targetHeading;
-            targetHeading = yaw; 
-            resetSpeedHistory(); 
-            currentPhase = WALKING_FWD;
-            
-            // ── TRIGGER 5-SECOND COUNTDOWN AUDIO DELAY BEFORE MOTOR ENGAGEMENT ──
-            sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_MISSION_START, 0); 
-            delay(5000); // Wait out the entire "3 2 1" audio track completely
-            
-            state = 1; 
-            M5.Lcd.fillScreen(BLACK);
-            Serial.println("STATUS:LAUNCHED_VIA_WIFI");
-        }
     }
     http.end();
 }
@@ -140,9 +151,9 @@ void handlePCNetworking(unsigned long now) {
     streamTelemetryToPC(now);
 }
 
-// Network fallbacks error code slots
 void triggerNetworkAlert(int conditionId) {
     if (conditionId == 404) {
-        sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_ROUTE_ERROR, 0); // 4.5s No route error
+        sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_ROUTE_ERROR, 0);
     }
 }
+
