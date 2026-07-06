@@ -166,6 +166,7 @@ void pollCalibrationRequest() {
 }
 
 
+
 void handlePCNetworking(unsigned long now) {
     if (state == 0 && (now - lastInstructionPollTime >= 1500)) {
         lastInstructionPollTime = now;

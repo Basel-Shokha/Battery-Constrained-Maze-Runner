@@ -160,6 +160,8 @@ button:hover{filter:brightness(0.9);}
     <!-- Inside the topbar div, right next to the SOLVE button -->
 
     <button class="btn-solve" id="send-btn" onclick="sendMazeToM5()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">SEND TO M5 ⬆</button>
+    <button class="btn-solve" id="calibrate-btn" onclick="calibrateM5()" style="background: linear-gradient(135deg, #f59e0b, #b45309);">⟲ CALIBRATE</button>
+
     <div id="telemetry-panel" style="position:fixed;right:8px;bottom:20px;width:150px;height:300px;z-index:100;">
       <div style="position:relative;width:150px;height:300px;filter:drop-shadow(0 6px 16px rgba(0,0,0,.45));">
         <svg viewBox="0 0 150 300" width="150" height="300" xmlns="http://www.w3.org/2000/svg" style="position:absolute;inset:0;">
@@ -243,6 +245,22 @@ let currentPath = null;
 let animRunning = false;
 let animCancel = false;
 let runMode = 'mission';
+
+
+async function calibrateM5() {
+  const btn = document.getElementById('calibrate-btn');
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'CALIBRATING…';
+  try {
+    const res = await fetch('http://localhost:8085/calibrate', { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    document.getElementById('path-status').innerHTML =
+      `<span class="status-success">⟲ Calibration command sent — keep the robot still.</span>`;
+  } catch (err) {
+    document.getElementById('path-status').innerHTML =
+      `<span class="status-danger">⚠ Calibration failed: ${err.message}</span>`;
+  }
+  setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3000);
+}
 
 
 // Add this function alongside your other script blocks

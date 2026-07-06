@@ -15,6 +15,9 @@ std::string rawM5InstructionString = "START:1,0\n";
 std::string latestMazeJson = "{}";
 json globalTelemetryCache = {{"stepIdx",0},{"yaw",0.0},{"left",0},{"front",0},{"right",0},{"state","IDLE"}};
 bool newMissionAvailable = false;
+bool calibrationRequested = false;
+
+
 
 std::string getHeadingLabel(int dir) {
     if (dir == 0) return "NORTH";
@@ -161,6 +164,30 @@ int main() {
         }
     });
 
+    
+    
+    
+    // ── WEB UI REQUESTS A GYRO CALIBRATION ──────────────────────────
+    svr.Post("/calibrate", [&](const httplib::Request&, httplib::Response& res) {
+        add_cors_headers(res);
+        calibrationRequested = true;
+        std::cout << "[SERVER] Calibration requested by web UI.\n";
+        res.set_content("{\"status\":\"calibration_queued\"}", "application/json");
+    });
+
+    // ── M5 POLLS THIS; FLAG SELF-CLEARS SO IT ONLY FIRES ONCE ───────
+    svr.Get("/get_calibrate", [&](const httplib::Request&, httplib::Response& res) {
+        add_cors_headers(res);
+        if (calibrationRequested) {
+            calibrationRequested = false;
+            res.set_content("{\"calibrate\":true}", "application/json");
+        } else {
+            res.set_content("{\"calibrate\":false}", "application/json");
+        }
+    });
+
+    
+    
     // ── NEW: ROUTE B: INJECT START COMMAND FROM WEB DISPATCHER ────────
     svr.Post("/start_journey", [&](const httplib::Request& req, httplib::Response& res) {
         add_cors_headers(res);
