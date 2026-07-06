@@ -29,6 +29,7 @@ struct MovementStep {
 };
 
 Direction initialSpawnDirection = EAST;
+Direction currentRobotDirection = EAST; // ── NEW: TRACKS COMPASS DIRECTION LATCH RELATIVELY ──
 MovementStep missionPipeline[50];
 uint8_t totalMissionSteps       = 0;
 int8_t activeStepIndex          = -1;
@@ -42,7 +43,7 @@ bool esp32ChargeFinished     = false;
 unsigned long handshakeResendTime = 0;
 unsigned long postChargeTimer      = 0;
 
-// ── NEW: BLIND SPOT TIMERS & STRAFING FLAGS ──────────────────
+// ── BLIND SPOT TIMERS & STRAFING FLAGS ──────────────────
 int8_t lastStepIndex          = -1;
 unsigned long stepStartTime   = 0;
 bool isStrafingLeft           = false;
@@ -52,7 +53,7 @@ volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
 unsigned long settleTimer    = 0;
-int16_t baselineSpeed        = 30; 
+int16_t baselineSpeed        = 45; 
 
 unsigned long lastStuckCheckTime = 0;
 float lastStuckCheckYaw          = 0.0f;
@@ -65,6 +66,7 @@ extern void walkForward();
 extern void resetSpeedHistory();
 extern void processParallelAlignment(unsigned long now, unsigned long &lastSampleTime);
 extern float angleDiff(float target, float current);
+extern float wrap360(float a); // Link to gyroscope tab utility
 
 extern void connectWiFi();
 extern void handlePCNetworking(unsigned long now);
@@ -89,9 +91,6 @@ const char* getDirectionName(Direction dir) {
   return "UNKNOWN";
 }
 
-
-
-
 void setup() {
   M5.begin(); Serial.begin(115200); Wire.begin(0, 26); 
   initPeripheralUART(); 
@@ -112,8 +111,6 @@ void loop() {
   receivePeripheralTelemetry();
   handlePCNetworking(now);
 
-
-
   if (state == 1) {
     // ── FOOLPROOF TIMING LATCH FOR LEG CHANGEOVERS ──────────
     if (activeStepIndex != lastStepIndex) {
@@ -123,32 +120,30 @@ void loop() {
         isStrafingRight = false;
     }
 
-    // ── NEW: GLOBAL SIDE-WALL GUARD (BYPASSES GYRO ENTIRELY) ──
+    // ── GLOBAL SIDE-WALL GUARD (BYPASSES GYRO ENTIRELY) ──
     if (!isStrafingLeft && !isStrafingRight) {
-        if (s_left > 0 && s_left <= 50) { // 5cm or less on Left
+        if (s_left > 0 && s_left <= 50) { 
             isStrafingRight = true;
-        } else if (s_right > 0 && s_right <= 50) { // 5cm or less on Right
+        } else if (s_right > 0 && s_right <= 50) { 
             isStrafingLeft = true;
         }
     }
 
     if (isStrafingRight) {
-        if (s_left >= 90) { // Clear once distance reaches 9cm
+        if (s_left >= 90) { 
             isStrafingRight = false;
         } else {
-            // Wheels 1 & 4 forward (+45), Wheels 2 & 3 backward (-45) -> Strafe Right
             setMotors(45, -45, -45, 45);
-            goto renderDisplayLink; // Bypass regular driving timeline updates
+            goto renderDisplayLink; 
         }
     }
 
     if (isStrafingLeft) {
-        if (s_right >= 90) { // Clear once distance reaches 9cm
+        if (s_right >= 90) { 
             isStrafingLeft = false;
         } else {
-            // Wheels 1 & 4 backward (-45), Wheels 2 & 3 forward (+45) -> Strafe Left
             setMotors(-45, 45, 45, -45);
-            goto renderDisplayLink; // Bypass regular driving timeline updates
+            goto renderDisplayLink; 
         }
     }
 
@@ -161,7 +156,6 @@ void loop() {
           MovementStep currentLeg = missionPipeline[activeStepIndex];
           uint16_t stopThresholdMm = (currentLeg.stopLimitGrids * 300) + 150;
 
-          // ── NEW: NON-BLOCKING FRONT SENSOR BLIND SPOT TIMER ──
           unsigned long blindSpotDuration = currentLeg.gridsToCross * 1500;
           bool isBlindSpotActive = (now - stepStartTime < blindSpotDuration);
 
@@ -180,7 +174,7 @@ void loop() {
               goto targetTurnCalculation;
             }
           } else {
-            walkForward(); // Invokes Argentina parallel tracking loop
+            walkForward(); // Invokes Argentina tracking lines
           }
         }
         break;
@@ -232,12 +226,30 @@ void loop() {
         }
 
         MovementStep nextLeg = missionPipeline[activeStepIndex];
-        if      (nextLeg.orientation == NORTH) turnTargetYaw = 0.0f;
-        else if (nextLeg.orientation == EAST)  turnTargetYaw = 90.0f;
-        else if (nextLeg.orientation == SOUTH) turnTargetYaw = 180.0f;
-        else if (nextLeg.orientation == WEST)  turnTargetYaw = 270.0f;
 
         if (currentPhase != TURNING) {
+            // Initial path spawn sync check
+            if (activeStepIndex == 0) {
+                currentRobotDirection = initialSpawnDirection;
+            }
+
+            Direction nextDir = nextLeg.orientation;
+            float relativeAngleDelta = 0.0f;
+
+            // ── EXPLICIT RELATIVE DIRECTIONS — 3 IFS ONLY ──
+            if ((currentRobotDirection + 1) % 4 == nextDir) {
+                relativeAngleDelta = 90.0f;  // Turn Right
+            } 
+            else if ((currentRobotDirection + 2) % 4 == nextDir) {
+                relativeAngleDelta = 180.0f; // U-Turn
+            } 
+            else if ((currentRobotDirection + 3) % 4 == nextDir) {
+                relativeAngleDelta = -90.0f; // Turn Left
+            }
+
+            // DEDUCTS TARGET FROM THE EXACT CURRENT DRIFTING YAW INDEX VALUE
+            turnTargetYaw = wrap360(yaw + relativeAngleDelta);
+
             sendPCNotification("TURNING_START", (int)turnTargetYaw);
             lastStuckCheckTime = now; lastStuckCheckYaw = yaw; antiStuckSpeedBoost = 0;
             currentPhase = TURNING;
@@ -275,6 +287,10 @@ void loop() {
         if (fabsf(error) <= 2.0f) {
           targetHeading = turnTargetYaw;
           sendPCNotification("TURN_CONFIRMED_ACK", (int)targetHeading);
+          
+          // ── SYNC LOGICAL COMPASS REGISTER ON COMPLETED TURN PROFILE ──
+          currentRobotDirection = missionPipeline[activeStepIndex].orientation;
+
           resetSpeedHistory(); lastSampleTime = millis();
           currentPhase = WALKING_FWD; 
         } else {
@@ -310,3 +326,4 @@ void loop() {
   }
   delay(2);
 }
+
