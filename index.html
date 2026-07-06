@@ -157,7 +157,24 @@ button:hover{filter:brightness(0.9);}
     <!-- Solve -->
     <button class="btn-solve" id="solve-btn" onclick="solve()">SOLVE ▶</button>
     <!-- Inside the topbar div, right next to the SOLVE button -->
+
     <button class="btn-solve" id="send-btn" onclick="sendMazeToM5()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">SEND TO M5 ⬆</button>
+    <div id="telemetry-panel" style="position: absolute; right: 180px; top: 70px; width: 220px; background: var(--surface); border: 1px solid var(--border); padding: 12px; font-family: monospace; z-index: 100;">
+      <h4 style="margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; text-align: center; color: var(--primary);">LIVE TELEMETRY</h4>
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 11px;">
+        <div><strong>STATE:</strong> <span id="tele-state" class="status-warn">OFFLINE</span></div>
+        <div><strong>ACTIVE STEP:</strong> <span id="tele-step">--</span></div>
+        <div><strong>YAW HEADING:</strong> <span id="tele-yaw">0.0°</span></div>
+        <hr style="border-color: var(--border); margin: 4px 0;">
+        <div style="text-align: center; font-weight: bold; font-size: 10px;">LASER DISTANCES (mm)</div>
+        <div style="display: flex; justify-content: space-between;">
+          <span>[L]: <span id="tele-laser-l">0000</span></span>
+          <span>[F]: <span id="tele-laser-f">0000</span></span>
+          <span>[R]: <span id="tele-laser-r">0000</span></span>
+        </div>
+      </div>
+    </div>
+
     <span id="step-badge">step 0</span>
 
     <button onclick="openGallery()">📂 Mazes</button>
@@ -227,7 +244,7 @@ async function sendMazeToM5() {
   const req = buildRequestJSON(); // Wraps up your configured layout payload
 
   try {
-    const res = await fetch('http://localhost:8080/send_maze', {
+    const res = await fetch('http://localhost:8085/send_maze', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify(req)
@@ -660,7 +677,7 @@ async function solve() {
   const req = buildRequestJSON();
 
   try {
-    const res = await fetch('http://localhost:8080/solve', {
+    const res = await fetch('http://localhost:8085/solve', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify(req)
@@ -738,10 +755,9 @@ function applyResponseData(data) {
   }
 
   if (!steps) return;
-
   currentPath = steps;
 
-  // Bottom bar path string
+  // Render text path map on the bottom bar display frame
   const pathStr = steps.map(s => {
     if (s.type === 'charge')      return `<${s.cell[0]},${s.cell[1]}>`;
     if (s.type === 'destination') return `[${s.cell[0]},${s.cell[1]}]`;
@@ -755,13 +771,14 @@ function applyResponseData(data) {
   if (runMode === 'continuous') {
     document.getElementById('path-status').innerHTML = `<span class="status-success">Continuous Operation — no battery limits.</span>`;
   } else {
-    document.getElementById('path-status').innerHTML =
-            `<span class="status-success">Route feasible — ${cost}/${cap} energy units.</span>`;
+    document.getElementById('path-status').innerHTML = `<span class="status-success">Route feasible — ${cost}/${cap} energy units.</span>`;
   }
 
+  // Draw lines on canvas and trigger local screen rover simulation mechanics
   drawPath(steps);
   animateRover(steps);
 }
+
 
 function buildRequestJSON() {
   const actualCap = parseInt(document.getElementById('battery-cap').value) || 10;
@@ -1016,8 +1033,58 @@ function loadGalleryMaze(data) {
       active_cells:[[0,2],[1,0],[1,1],[1,2],[1,3],[1,4],[2,2]],charging_stations:[],walls:[]} },
 
 */
-window.onload = () => generateGrid(true);
-window.addEventListener('resize', () => { calculateScaling(); if(currentPath) drawPath(currentPath); });
+// ── GLOBAL CLOSED-LOOP TELEMETRY TRACKER ENGINE ──────────────────────
+  window.updateLiveTrackerUI = function(stepIdx, yaw, left, front, right, stateLabel) {
+    const stateEl = document.getElementById('tele-state');
+    if (!stateEl) return;
+    stateEl.textContent = stateLabel;
+    document.getElementById('tele-step').textContent = stepIdx >= 0 ? stepIdx : "IDLE";
+    document.getElementById('tele-yaw').textContent = parseFloat(yaw).toFixed(1) + "°";
+    document.getElementById('tele-laser-l').textContent = String(left).padStart(4, '0');
+    document.getElementById('tele-laser-f').textContent = String(front).padStart(4, '0');
+    document.getElementById('tele-laser-r').textContent = String(right).padStart(4, '0');
+
+    if (stateLabel === "DRIVING" || stateLabel === "RUNNING") {
+      stateEl.className = "status-success";
+      if (currentPath && currentPath[stepIdx]) {
+        const currentCell = currentPath[stepIdx].cell;
+        document.querySelectorAll('.cell').forEach(c => c.style.filter = '');
+        const cellEl = document.getElementById(`cell-${currentCell[0]}-${currentCell[1]}`);
+        if (cellEl) cellEl.style.filter = "drop-shadow(0 0 8px #3b82f6) brightness(1.2)";
+      }
+    } else if (stateLabel === "PIVOT_TURNING") {
+      stateEl.className = "status-warn";
+    } else {
+      stateEl.className = "status-warn";
+    }
+  };
+
+// ── INITIALIZE AUTOMATIC BACKGROUND WI-FI POLLING LOOP ─────────────
+  function startGlobalTelemetryPoller() {
+    setInterval(async () => {
+      try {
+        const res = await fetch('http://localhost:8085/get_telemetry');
+        if (res.ok) {
+          const t = await res.json();
+          if (window.updateLiveTrackerUI && t.state) {
+            window.updateLiveTrackerUI(t.stepIdx, t.yaw, t.left, t.front, t.right, t.state);
+          }
+        }
+      } catch (err) {
+        const stateEl = document.getElementById('tele-state');
+        if (stateEl) {
+          stateEl.textContent = "OFFLINE";
+          stateEl.className = "status-danger";
+        }
+      }
+    }, 200);
+  }
+
+  window.onload = () => {
+    generateGrid(true);
+    startGlobalTelemetryPoller();
+  };
+  window.addEventListener('resize', () => { calculateScaling(); if(currentPath) drawPath(currentPath); });
 </script>
 </body>
 </html>
