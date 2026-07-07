@@ -153,7 +153,7 @@ void loop() {
 
   receivePeripheralTelemetry();
 
-  if (state == 0 || currentPhase == WALKING_FWD) {
+  if (state == 0) {
       handlePCNetworking(now);
   }
 
