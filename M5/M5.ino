@@ -11,7 +11,6 @@ const int CMD_PLAY_AUDIO     = 1;
 const int CMD_STOP_AUDIO     = 2;
 const int CMD_START_CHARGE   = 3;
 const int CMD_BATTERY_UPDATE = 4;
-const int CMD_SET_VOLUME     = 5;
 
 const int AUDIO_MISSION_START = 101;
 const int AUDIO_GOING_STATION = 102;
@@ -40,21 +39,23 @@ bool esp32ChargeFinished     = false;
 unsigned long handshakeResendTime = 0;
 unsigned long postChargeTimer      = 0;
 
+///#GEMINI
+// ── GEMINI: ACTIVE BATTERY LEVEL MANAGEMENT REGISTERS ──
+uint8_t currentBatteryLevel = 8;
+bool batteryDecrementedThisStep = false;
+
 // ── TUNABLE CONFIGURATION PARAMETERS (EDIT HERE) ──
+unsigned long FIRST_GRID_BLIND_TIME = 1300; 
+unsigned long REST_GRID_BLIND_TIME  = 1300; 
+int8_t BASE_TURN_SPEED              = 23;   
+uint8_t MP3_VOLUME                  = 25;   
+
 ///#GEMINI
-unsigned long FIRST_GRID_BLIND_TIME = 1500; // Time (ms) for 1st grid acceleration profile
+int AUDIO_MISSION_START_TRACK       = 101;  // Track 1 (101 - 100 = 1 on ESP32 side)
 ///#GEMINI
-unsigned long REST_GRID_BLIND_TIME  = 1500; // Time (ms) added for each extra grid square
+int AUDIO_GOING_STATION_TRACK       = 103;  // Track 3 (103 - 100 = 3 on ESP32 side)
 ///#GEMINI
-int8_t BASE_TURN_SPEED              = 23;   // Raised to clear stiction stalls!
-///#GEMINI
-uint8_t MP3_VOLUME                  = 25;   // Master Volume level parameter (0-30)
-///#GEMINI
-int AUDIO_MISSION_START_TRACK       = 1;    // Track 1: Standard mission start message
-///#GEMINI
-int AUDIO_GOING_STATION_TRACK       = 3;    // Track 3: "Going to station" message
-///#GEMINI
-int AUDIO_MISSION_COMPLETE_TRACK    = 4;    // Track 4: Mission complete victory chime
+int AUDIO_MISSION_COMPLETE_TRACK    = 104;  // Track 4 (104 - 100 = 4 on ESP32 side)
 
 // ── BLIND SPOT TIMERS & STRAFING FLAGS ──────────────────
 int8_t lastStepIndex          = -1;
@@ -65,7 +66,7 @@ volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
 unsigned long settleTimer    = 0;
-int16_t baselineSpeed        = 25; // Main corridor driving speed
+int16_t baselineSpeed        = 30; 
 
 unsigned long lastStuckCheckTime = 0;
 float lastStuckCheckYaw          = 0.0f;
@@ -109,15 +110,17 @@ void resetRunState() {
     activeStepIndex = -1;       
     totalMissionSteps = 0;
     lastStepIndex = -1;         
-    
     currentPhase = WALKING_FWD; 
     isStrafingLeft = false;
     isStrafingRight = false;
     antiStuckSpeedBoost = 0;
 
-    ///#GEMINI
     chargeStartAckReceived = false;
     esp32ChargeFinished    = false;
+
+    ///#GEMINI
+    currentBatteryLevel        = 8;
+    batteryDecrementedThisStep = false;
 
     resetSpeedHistory();
     Serial.println("[RESET INTERRUPT] Local run state fully purged. Return to IDLE.");
@@ -130,10 +133,7 @@ void setup() {
   M5.IMU.SetGyroFsr(MPU6886::GFS_250DPS);
   M5.Lcd.setRotation(3); M5.Lcd.fillScreen(BLACK); M5.Lcd.setTextSize(2);
   connectWiFi(); 
-  
-  // Sync volume preference over to the peripheral hardware.
-  sendPeripheralCmd(CMD_SET_VOLUME, MP3_VOLUME, 0);
-
+  sendPeripheralCmd(CMD_BATTERY_UPDATE, MP3_VOLUME, MP3_VOLUME);
   M5.Lcd.fillScreen(BLACK); M5.Lcd.setTextColor(YELLOW);
   M5.Lcd.println("Calibrating Gyro...");
   calibrateGyro();
@@ -153,37 +153,47 @@ void loop() {
 
   receivePeripheralTelemetry();
 
-  // ── PC NETWORK STREAMING CONTROL ──
-  handlePCNetworking(now);
+  if (state == 0 || currentPhase == WALKING_FWD) {
+      handlePCNetworking(now);
+  }
 
   if (state == 1) {
-    // ── GLOBAL SIDE-WALL GUARD ──
     if (!isStrafingLeft && !isStrafingRight) {
         if (s_left > 0 && s_left <= 50) { isStrafingRight = true; } 
         else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true; }
     }
-
     if (isStrafingRight) {
         if (s_left >= 90) { isStrafingRight = false; } 
         else { setMotors(baselineSpeed, -baselineSpeed, -baselineSpeed, baselineSpeed); goto renderDisplayLink; }
     }
-
     if (isStrafingLeft) {
         if (s_right >= 90) { isStrafingLeft = false; } 
         else { setMotors(-baselineSpeed, baselineSpeed, baselineSpeed, -baselineSpeed); goto renderDisplayLink; }
     }
 
     switch (currentPhase) {
-      
       case WALKING_FWD: {
         if (activeStepIndex != lastStepIndex) {
             stepStartTime = now;
             lastStepIndex = activeStepIndex;
             isStrafingLeft = false;
             isStrafingRight = false;
+            ///#GEMINI
+            batteryDecrementedThisStep = false; // Clear step tracking flag
         }
 
         processParallelAlignment(now, lastSampleTime);
+
+        ///#GEMINI
+        // ── STEP DECREMENT LATCH (Triggers 1.5s into walking a leg) ──
+        if (!batteryDecrementedThisStep && (now - stepStartTime >= FIRST_GRID_BLIND_TIME)) {
+            batteryDecrementedThisStep = true;
+            if (currentBatteryLevel > 0) {
+                currentBatteryLevel--;
+            }
+            sendPeripheralCmd(CMD_BATTERY_UPDATE, currentBatteryLevel, 8);
+        }
+
         if (activeStepIndex >= 0 && activeStepIndex < totalMissionSteps) {
           MovementStep currentLeg = missionPipeline[activeStepIndex];
           uint16_t stopThresholdMm = (currentLeg.stopLimitGrids * 300) + 150;
@@ -197,12 +207,8 @@ void loop() {
             stopMotors();
             if (currentLeg.action == 1) {
               sendPCNotification("ARRIVED_STATION", activeStepIndex);
-              
-              ///#GEMINI
-              // Reset communication handshake states instantly upon arrival at the station lane
               chargeStartAckReceived = false;
               esp32ChargeFinished    = false;
-              
               currentPhase = CHARGE_HANDSHAKE;
             } else {
               activeStepIndex++;
@@ -225,6 +231,12 @@ void loop() {
           }
         } else {
           sendPCNotification("CHARGING_START", activeStepIndex);
+
+          ///#GEMINI
+          // ── INSTANT REFILL ON VALID CHARGING HANDSHAKE ACK ──
+          currentBatteryLevel = 8;
+          sendPeripheralCmd(CMD_BATTERY_UPDATE, currentBatteryLevel, 8);
+
           currentPhase = CHARGING_EXEC;
         }
         break;
@@ -269,7 +281,6 @@ void loop() {
                 targetHeading = yaw;
                 resetSpeedHistory(); lastSampleTime = millis();
                 currentPhase = WALKING_FWD; 
-                
                 if (missionPipeline[activeStepIndex].action == 1) {
                     sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION_TRACK, 0);
                 }
@@ -283,7 +294,6 @@ void loop() {
 
             turnTargetYaw = wrap360(yaw + relativeAngleDelta);
             sendPCNotification("TURNING_START", (int)turnTargetYaw);
-
             lastStuckCheckTime = now;
             lastStuckCheckYaw = yaw; antiStuckSpeedBoost = 0;
             currentPhase = TURNING;
@@ -291,7 +301,6 @@ void loop() {
 
         float error  = angleDiff(turnTargetYaw, yaw);
         float absErr = fabsf(error);
-
         if (absErr <= 2.0f) {
           if (error > 0) setMotors(-25, 25, -25, 25);
           else           setMotors(25, -25, 25, -25);
@@ -319,7 +328,6 @@ void loop() {
         if (fabsf(error) <= 2.0f) {
           targetHeading = turnTargetYaw;
           sendPCNotification("TURN_CONFIRMED_ACK", (int)targetHeading);
-
           currentRobotDirection = missionPipeline[activeStepIndex].orientation;
           resetSpeedHistory(); lastSampleTime = millis();
           currentPhase = WALKING_FWD;
@@ -327,8 +335,7 @@ void loop() {
               sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION_TRACK, 0);
           }
         } else {
-          lastStuckCheckTime = now;
-          lastStuckCheckYaw = yaw;
+          lastStuckCheckTime = now; lastStuckCheckYaw = yaw;
           currentPhase = TURNING;
         }
         break;
@@ -352,3 +359,4 @@ void loop() {
   }
   delay(2);
 }
+

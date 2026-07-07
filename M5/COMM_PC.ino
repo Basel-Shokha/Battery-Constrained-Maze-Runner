@@ -17,6 +17,9 @@ extern void resetSpeedHistory();
 extern void resetRunState();
 extern void sendPeripheralCmd(int commandId, int param1, int param2);
 
+extern int AUDIO_MISSION_START_TRACK;
+extern int AUDIO_GOING_STATION_TRACK;
+
 const char* WIFI_SSID   = "A";
 const char* WIFI_PASS   = "00000000";
 const char* SERVER_IP   = "192.168.137.1";
@@ -26,9 +29,8 @@ unsigned long lastPcStreamTime       = 0;
 unsigned long lastInstructionPollTime = 0;
 unsigned long lastControlPollTime     = 0;
 
-///#GEMINI
 // ── TUNABLE CONFIGURATION PARAMETERS (EDIT HERE) ──
-unsigned long TELEMETRY_INTERVAL_MS = 1000; // Customizable telemetry streaming interval (ms)
+unsigned long TELEMETRY_INTERVAL_MS = 1000; 
 
 void connectWiFi() {
   M5.Lcd.setTextColor(CYAN); M5.Lcd.println("Connecting Wi-Fi...");
@@ -37,18 +39,9 @@ void connectWiFi() {
   M5.Lcd.fillScreen(BLACK);
 }
 
-const char* getTelemetryStateLabel() {
-    if (state != 1) return "IDLE";
-    if (currentPhase == WALKING_FWD) return "RUNNING";
-    if (currentPhase == TURNING || currentPhase == VERIFYING_TURN) return "TURNING";
-    if (currentPhase == CHARGE_HANDSHAKE || currentPhase == CHARGING_EXEC || currentPhase == POST_CHARGE_CHIRP) return "CHARGING";
-    return "RUNNING";
-}
-
-// ── UNACKNOWLEDGED HIGH-FREQUENCY TELEMETRY OUTFLOW ─────────
 void streamTelemetryToPC(unsigned long now) {
-    ///#GEMINI
-    // Utilizing your customizable telemetry rate parameter
+    if (state == 1 && currentPhase != WALKING_FWD) return;
+
     if (now - lastPcStreamTime >= TELEMETRY_INTERVAL_MS) { 
         lastPcStreamTime = now;
         if (WiFi.status() != WL_CONNECTED) return;
@@ -57,9 +50,8 @@ void streamTelemetryToPC(unsigned long now) {
         char url[128];
         sprintf(url, "http://%s:%s/update_telemetry", SERVER_IP, SERVER_PORT);
         http.begin(url);
-        http.setTimeout(120);
         http.addHeader("Content-Type", "application/json");
-        const char* stateLabel = getTelemetryStateLabel();
+        const char* stateLabel = (state == 1) ? "RUNNING" : "IDLE";
         char jsonBuf[256];
         sprintf(jsonBuf, "{\"stepIdx\":%d,\"yaw\":%.1f,\"left\":%d,\"front\":%d,\"right\":%d,\"state\":\"%s\"}",
                 activeStepIndex, yaw, s_left, s_front, s_right, stateLabel);
@@ -68,7 +60,6 @@ void streamTelemetryToPC(unsigned long now) {
     }
 }
 
-// ── SERVER HANDSHAKE FOR EXPANDED DISCRETE WORK EVENTS ──
 void sendPCNotification(const char* eventType, int logValue) {
     if (WiFi.status() != WL_CONNECTED) return;
     HTTPClient http;
@@ -124,9 +115,14 @@ void pollInstructionsFromServer() {
                     resetSpeedHistory(); currentPhase = WALKING_FWD;
                     
                     ///#GEMINI
-                    // Check if the first step ends with a charge station right out of the gate
-                    extern int AUDIO_GOING_STATION_TRACK;
-                    extern int AUDIO_MISSION_START_TRACK;
+                    // ── AT FIRST: INITIALIZE COMPONENT VALUES TO RENDER FULL GREEN RING ──
+                    extern uint8_t currentBatteryLevel;
+                    extern bool batteryDecrementedThisStep;
+                    extern const int CMD_BATTERY_UPDATE;
+                    currentBatteryLevel = 8;
+                    batteryDecrementedThisStep = false;
+                    sendPeripheralCmd(CMD_BATTERY_UPDATE, currentBatteryLevel, 8);
+                    
                     if (missionPipeline[0].action == 1) {
                         sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION_TRACK, 0);
                     } else {
@@ -190,10 +186,9 @@ void pollResetRequest() {
     char url[128];
     sprintf(url, "http://%s:%s/get_reset", SERVER_IP, SERVER_PORT);
     http.begin(url);
-    http.setTimeout(120);
     if (http.GET() == HTTP_CODE_OK) {
         String payload = http.getString();
-        if (payload.indexOf("\"reset\":true") >= 0) {
+        if (payload.indexOf("\"reset\\\":true") >= 0) {
             resetRunState();
             sendPCNotification("RUN_RESET_ACK", 1);
             Serial.println("STATUS:RESET_VIA_SERVER_CMD");
