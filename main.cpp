@@ -16,6 +16,7 @@ std::string latestMazeJson = "{}";
 json globalTelemetryCache = {{"stepIdx",0},{"yaw",0.0},{"left",0},{"front",0},{"right",0},{"state","IDLE"}};
 bool newMissionAvailable = false;
 bool calibrationRequested = false;
+bool resetRequested = false;
 
 void printM5Packet(const std::string& packet) {
     std::cout << "\n========== PACKET SENT TO M5 ==========\n"
@@ -27,6 +28,20 @@ void printM5Packet(const std::string& packet) {
     }
 
     std::cout << "=======================================\n" << std::flush;
+}
+
+void removeStartJourneyCommands() {
+    std::stringstream input(rawM5InstructionString);
+    std::stringstream output;
+    std::string line;
+
+    while (std::getline(input, line)) {
+        if (line != "CMD:START_JOURNEY") {
+            output << line << "\n";
+        }
+    }
+
+    rawM5InstructionString = output.str();
 }
 
 
@@ -86,6 +101,8 @@ int main() {
 
     svr.Options("/send_maze",     [&](const httplib::Request&, httplib::Response& res) { add_cors_headers(res); res.status = 204; });
     svr.Options("/start_journey", [&](const httplib::Request&, httplib::Response& res) { add_cors_headers(res); res.status = 204; });
+    svr.Options("/reset",         [&](const httplib::Request&, httplib::Response& res) { add_cors_headers(res); res.status = 204; });
+    svr.Options("/notify_event",  [&](const httplib::Request&, httplib::Response& res) { add_cors_headers(res); res.status = 204; });
     svr.Options("/get_telemetry", [&](const httplib::Request&, httplib::Response& res) { add_cors_headers(res); res.status = 204; });
     svr.Options("/solve",         [&](const httplib::Request&, httplib::Response& res) { add_cors_headers(res); res.status = 204; });
 
@@ -169,6 +186,7 @@ int main() {
             rawM5InstructionString = textStream.str();
             latestMazeJson = request.dump();
             newMissionAvailable = false;
+            resetRequested = false;
 
             res.set_content("{\"status\":\"stored\",\"feasible\":true}", "application/json");
         } catch (...) {
@@ -198,12 +216,43 @@ int main() {
         }
     });
 
+    // ── WEB UI REQUESTS A FULL RUN RESET ───────────────────────────
+    svr.Post("/reset", [&](const httplib::Request&, httplib::Response& res) {
+        add_cors_headers(res);
+        resetRequested = true;
+        calibrationRequested = false;
+        newMissionAvailable = false;
+        removeStartJourneyCommands();
+
+        globalTelemetryCache["stepIdx"] = -1;
+        globalTelemetryCache["yaw"]     = 0.0;
+        globalTelemetryCache["left"]    = 0;
+        globalTelemetryCache["front"]   = 0;
+        globalTelemetryCache["right"]   = 0;
+        globalTelemetryCache["state"]   = "RESETTING";
+
+        std::cout << "[SERVER] Reset requested by web UI.\n";
+        res.set_content("{\"status\":\"reset_queued\"}", "application/json");
+    });
+
+    // ── M5 POLLS THIS; FLAG SELF-CLEARS SO RESET ONLY FIRES ONCE ───
+    svr.Get("/get_reset", [&](const httplib::Request&, httplib::Response& res) {
+        add_cors_headers(res);
+        if (resetRequested) {
+            resetRequested = false;
+            res.set_content("{\"reset\":true}", "application/json");
+        } else {
+            res.set_content("{\"reset\":false}", "application/json");
+        }
+    });
+
     
     
     // ── NEW: ROUTE B: INJECT START COMMAND FROM WEB DISPATCHER ────────
     svr.Post("/start_journey", [&](const httplib::Request& req, httplib::Response& res) {
         add_cors_headers(res);
         // Append execution command onto raw text segment
+        removeStartJourneyCommands();
         rawM5InstructionString += "CMD:START_JOURNEY\n";
         newMissionAvailable = true;
         std::cout << "[SERVER HANDSHAKE] Start command logged. Sending execution cue to M5!\n";
@@ -235,6 +284,26 @@ int main() {
             res.status = 200; res.set_content("{\"status\":\"ok\"}", "application/json");
         } catch(...) {
             res.status = 400; res.set_content("{\"status\":\"error\"}", "application/json");
+        }
+    });
+
+    svr.Post("/notify_event", [&](const httplib::Request& req, httplib::Response& res) {
+        add_cors_headers(res);
+        try {
+            json event = json::parse(req.body);
+            std::string eventName = event.value("event", "UNKNOWN");
+            int eventValue = event.value("value", 0);
+
+            if (eventName == "RUN_RESET_ACK") {
+                globalTelemetryCache["stepIdx"] = -1;
+                globalTelemetryCache["state"] = "IDLE";
+            }
+
+            std::cout << "[M5 EVENT] " << eventName << " value=" << eventValue << "\n";
+            res.set_content("{\"status\":\"ok\"}", "application/json");
+        } catch (...) {
+            res.status = 400;
+            res.set_content("{\"status\":\"error\"}", "application/json");
         }
     });
 

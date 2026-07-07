@@ -88,6 +88,10 @@ button:hover{filter:brightness(0.9);}
 
 /* Step counter badge */
 #step-badge{background:var(--primary);color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;display:none;}
+#m5-calibrate-side{cursor:pointer;}
+#m5-calibrate-side rect{transition:fill 0.15s,filter 0.15s,transform 0.15s;transform-origin:147.5px 137px;}
+#m5-calibrate-side:hover rect{fill:#f97316;filter:drop-shadow(0 0 5px #facc15);}
+#m5-calibrate-side.calibrating rect{fill:#facc15;filter:drop-shadow(0 0 8px #facc15);transform:translateX(-2px);}
 
 /* ── Maze Gallery Modal ───────────────────────────────────── */
 #gallery-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:500;display:none;align-items:center;justify-content:center;}
@@ -160,13 +164,16 @@ button:hover{filter:brightness(0.9);}
     <!-- Inside the topbar div, right next to the SOLVE button -->
 
     <button class="btn-solve" id="send-btn" onclick="sendMazeToM5()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">SEND TO M5 ⬆</button>
-    <button class="btn-solve" id="calibrate-btn" onclick="calibrateM5()" style="background: linear-gradient(135deg, #f59e0b, #b45309);">⟲ CALIBRATE</button>
+    <button class="btn-solve" id="reset-btn" onclick="resetM5Run()" style="background: linear-gradient(135deg, #ef4444, #991b1b);">RESET RUN</button>
 
     <div id="telemetry-panel" style="position:fixed;right:8px;bottom:20px;width:150px;height:300px;z-index:100;">
       <div style="position:relative;width:150px;height:300px;filter:drop-shadow(0 6px 16px rgba(0,0,0,.45));">
         <svg viewBox="0 0 150 300" width="150" height="300" xmlns="http://www.w3.org/2000/svg" style="position:absolute;inset:0;">
-          <rect x="144" y="120" width="7" height="34" rx="3" fill="#d9431f"/>
           <rect x="5" y="5" width="140" height="290" rx="26" fill="#f24d2e" stroke="#c2410c" stroke-width="2"/>
+          <g id="m5-calibrate-side" onclick="calibrateM5()" tabindex="0" role="button" aria-label="Calibrate M5" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();calibrateM5();}">
+            <title>Calibrate M5</title>
+            <rect x="142" y="120" width="9" height="34" rx="3" fill="#d9431f"/>
+          </g>
           <rect x="16" y="20" width="118" height="162" rx="9" fill="#1c1917"/>
           <rect x="22" y="26" width="106" height="150" rx="4" fill="#0a0f0a"/>
             <g onclick="startJourney()" style="cursor:pointer;">
@@ -252,7 +259,17 @@ let runMode = 'mission';
 
 async function calibrateM5() {
   const btn = document.getElementById('calibrate-btn');
-  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'CALIBRATING…';
+  const sideBtn = document.getElementById('m5-calibrate-side');
+  if (btn?.disabled) return;
+  if (sideBtn?.classList.contains('calibrating')) return;
+
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.origText = btn.textContent;
+    btn.textContent = 'CALIBRATING…';
+  }
+  sideBtn?.classList.add('calibrating');
+
   try {
     const res = await fetch('http://localhost:8085/calibrate', { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -262,7 +279,54 @@ async function calibrateM5() {
     document.getElementById('path-status').innerHTML =
       `<span class="status-danger">⚠ Calibration failed: ${err.message}</span>`;
   }
-  setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3000);
+  setTimeout(() => {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.origText || '⟲ CALIBRATE';
+    }
+    sideBtn?.classList.remove('calibrating');
+  }, 3000);
+}
+
+
+async function resetM5Run() {
+  const btn = document.getElementById('reset-btn');
+  if (btn?.disabled) return;
+
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.origText = btn.textContent;
+    btn.textContent = 'RESETTING…';
+  }
+
+  try {
+    const res = await fetch('http://localhost:8085/reset', { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    animCancel = true;
+    hideRover();
+    clearCanvas();
+    currentPath = null;
+    document.getElementById('step-badge').style.display = 'none';
+    document.getElementById('path-route').textContent = 'Run reset. Send/start the maze again when ready.';
+    document.getElementById('path-status').innerHTML =
+      `<span class="status-success">↻ Reset command sent to M5. Rover should return to idle.</span>`;
+
+    const solveBtn = document.getElementById('solve-btn');
+    solveBtn.disabled = false;
+    solveBtn.textContent = 'SOLVE ▶';
+    refreshIcons();
+  } catch (err) {
+    document.getElementById('path-status').innerHTML =
+      `<span class="status-danger">⚠ Reset failed: ${err.message}</span>`;
+  }
+
+  setTimeout(() => {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.origText || 'RESET RUN';
+    }
+  }, 2000);
 }
 
 

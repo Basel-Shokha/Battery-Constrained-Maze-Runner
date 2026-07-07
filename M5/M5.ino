@@ -49,6 +49,18 @@ unsigned long stepStartTime   = 0;
 bool isStrafingLeft           = false;
 bool isStrafingRight          = false;
 
+// ── RELATIVE FRONT-STOP TUNING ─────────────────────────────
+const int GRID_MM             = 300;   // physical length of one grid cell (mm)
+const int FRONT_STOP_MARGIN   = 100;   // R0 must clear grids*GRID_MM by this much to be trusted (mm)
+const int FRONT_STOP_MAX_MM   = 3000;  // readings beyond this = "no wall in range" -> use fallback
+const int FRONT_STOP_DEBOUNCE = 3;     // consecutive qualifying frames required before stopping
+
+// ── RELATIVE FRONT-STOP STATE (latched fresh each leg) ─────
+uint16_t legStartFrontMm   = 0;        // R0: front reading captured when this leg's drive begins
+uint16_t frontStopTargetMm = 0;        // target = R0 - gridsToCross*GRID_MM
+bool     relativeStopArmed = false;    // true when R0 was a valid wall with room to move
+uint8_t  frontStopHits     = 0;        // debounce counter for the stop condition
+
 volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
@@ -89,6 +101,47 @@ const char* getDirectionName(Direction dir) {
   if (dir == SOUTH) return "SOUTH"; 
   if (dir == WEST)  return "WEST";
   return "UNKNOWN";
+}
+
+void resetRunState() {
+  stopMotors();
+  sendPeripheralCmd(CMD_STOP_AUDIO, 0, 0);
+
+  state                  = 0;
+  activeStepIndex        = -1;
+  currentRobotDirection  = initialSpawnDirection;
+  currentPhase           = WALKING_FWD;
+
+  chargeStartAckReceived = false;
+  esp32ChargeFinished    = false;
+  handshakeResendTime    = 0;
+  postChargeTimer        = 0;
+
+  lastStepIndex          = -1;
+  stepStartTime          = 0;
+  isStrafingLeft         = false;
+  isStrafingRight        = false;
+
+  legStartFrontMm        = 0;
+  frontStopTargetMm      = 0;
+  relativeStopArmed      = false;
+  frontStopHits          = 0;
+
+  settleTimer            = 0;
+  lastStuckCheckTime     = 0;
+  lastStuckCheckYaw      = yaw;
+  antiStuckSpeedBoost    = 0;
+
+  targetHeading          = yaw;
+  turnTargetYaw          = yaw;
+  resetSpeedHistory();
+  lastSampleTime         = millis();
+
+  M5.Lcd.fillScreen(BLACK);
+  M5.Lcd.setTextColor(CYAN, BLACK);
+  M5.Lcd.setCursor(0, 0);
+  M5.Lcd.println("Run Reset");
+  M5.Lcd.println("Ready");
 }
 
 void setup() {
@@ -145,22 +198,49 @@ void loop() {
       case WALKING_FWD: {
         // ── FIXED LATCH: STARTS THE TIMER ONLY WHEN WE ACTUALLY BEGIN DRIVING ──
         if (activeStepIndex != lastStepIndex) {
-            stepStartTime = now;
-            lastStepIndex = activeStepIndex;
-            isStrafingLeft = false;
-            isStrafingRight = false;
+          stepStartTime = now;
+          lastStepIndex = activeStepIndex;
+          isStrafingLeft = false;
+          isStrafingRight = false;
+
+          // ── LATCH R0 FOR THIS LEG (relative front-stop) ──
+          int gridsMm       = missionPipeline[activeStepIndex].gridsToCross * GRID_MM;
+          legStartFrontMm   = s_front;
+          frontStopHits     = 0;
+          // Trust the relative method only if we latched a real wall with room to move.
+          if (legStartFrontMm > 0 &&
+              legStartFrontMm <= FRONT_STOP_MAX_MM &&
+              legStartFrontMm >= gridsMm + FRONT_STOP_MARGIN) {
+              frontStopTargetMm = (uint16_t)(legStartFrontMm - gridsMm);
+              relativeStopArmed = true;
+          } else {
+              relativeStopArmed = false;   // fall back to absolute threshold this leg
+          }
         }
 
         processParallelAlignment(now, lastSampleTime);
         if (activeStepIndex >= 0 && activeStepIndex < totalMissionSteps) {
           MovementStep currentLeg = missionPipeline[activeStepIndex];
-          uint16_t stopThresholdMm = (currentLeg.stopLimitGrids * 300) + 150;
 
-          // ── CORRECT TIME METRIC: GRIDS * 1500ms RUNS PURELY ON CORRIDOR DRIVE START ──
-          unsigned long blindSpotDuration = currentLeg.gridsToCross * 1500;
-          bool isBlindSpotActive = (now - stepStartTime < blindSpotDuration);
+          // ── ARRIVAL TEST ────────────────────────────────────────
+          bool arrived = false;
+          if (relativeStopArmed) {
+            // RELATIVE: stop once the front wall has closed in by gridsToCross*300 mm
+            // from the reading we latched at the start of this leg.
+            if (s_front > 0 && s_front <= frontStopTargetMm) {
+              if (++frontStopHits >= FRONT_STOP_DEBOUNCE) arrived = true;
+            } else {
+              frontStopHits = 0;
+            }
+          } else {
+            // FALLBACK: no trustworthy wall at leg start -> original absolute rule.
+            uint16_t stopThresholdMm   = (currentLeg.stopLimitGrids * 300) + 150;
+            unsigned long blindSpotDur = currentLeg.gridsToCross * 1500;
+            bool isBlindSpotActive     = (now - stepStartTime < blindSpotDur);
+            if (!isBlindSpotActive && s_front > 0 && s_front <= stopThresholdMm) arrived = true;
+          }
 
-          if (!isBlindSpotActive && s_front > 0 && s_front <= stopThresholdMm) {
+          if (arrived) {
             stopMotors();
             
             if (currentLeg.action == 1) {

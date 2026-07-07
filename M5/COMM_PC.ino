@@ -15,6 +15,7 @@ extern volatile uint16_t s_left, s_front, s_right;
 extern float yaw;
 extern const int CMD_PLAY_AUDIO, AUDIO_MISSION_START, AUDIO_ROUTE_ERROR;
 extern void resetSpeedHistory();
+extern void resetRunState();
 extern void sendPeripheralCmd(int commandId, int param1, int param2);
 
 const char* WIFI_SSID   = "A";
@@ -24,6 +25,7 @@ const char* SERVER_PORT = "8085";
 
 unsigned long lastPcStreamTime       = 0;
 unsigned long lastInstructionPollTime = 0;
+unsigned long lastControlPollTime     = 0;
 
 void connectWiFi() {
   M5.Lcd.setTextColor(CYAN); M5.Lcd.println("Connecting Wi-Fi...");
@@ -166,8 +168,31 @@ void pollCalibrationRequest() {
 }
 
 
+void pollResetRequest() {
+    if (WiFi.status() != WL_CONNECTED) return;
+    HTTPClient http;
+    char url[128];
+    sprintf(url, "http://%s:%s/get_reset", SERVER_IP, SERVER_PORT);
+    http.begin(url);
+    if (http.GET() == HTTP_CODE_OK) {
+        String payload = http.getString();
+        if (payload.indexOf("\"reset\":true") >= 0) {
+            resetRunState();
+            sendPCNotification("RUN_RESET_ACK", 1);
+            Serial.println("STATUS:RESET_VIA_SERVER_CMD");
+        }
+    }
+    http.end();
+}
+
+
 
 void handlePCNetworking(unsigned long now) {
+    if (now - lastControlPollTime >= 500) {
+        lastControlPollTime = now;
+        pollResetRequest();
+    }
+
     if (state == 0 && (now - lastInstructionPollTime >= 1500)) {
         lastInstructionPollTime = now;
         pollInstructionsFromServer();
