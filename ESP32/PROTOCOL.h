@@ -11,7 +11,6 @@ const int CMD_PLAY_AUDIO     = 1;
 const int CMD_STOP_AUDIO     = 2;
 const int CMD_START_CHARGE   = 3;
 const int CMD_BATTERY_UPDATE = 4;
-const int CMD_SET_VOLUME     = 5;
 
 // ── INTEGRAL AUDIO TRACK CODES ──────────────────────────────
 const int AUDIO_MISSION_START = 101; // "path computed..." (5.0s)

@@ -13,7 +13,6 @@ unsigned long lastSendTime = 0;
 unsigned long lastOrangeUpdateTime = 0;
 unsigned long notifyResendTime      = 0;
 bool isAwaitingChargeDoneAck        = false;
-uint8_t currentVolume               = 30;
 
 String inputBuffer = "";
 
@@ -41,7 +40,7 @@ void setup() {
     initMP3();
     initSensors(); 
 
-    setVolume(currentVolume);
+    setVolume(30);
     setRingColor(200, 60, 0);
     lastOrangeUpdateTime = millis();
     M5Serial.begin(115200, SERIAL_8N1, 16, 17);
@@ -102,7 +101,7 @@ void parsePacket(String inLine) {
     if (sscanf(inLine.c_str(), "PACKET:%d,%d,%d", &cmdId, &p1, &p2) != 3) return;
     
     if (cmdId == CMD_PLAY_AUDIO) {
-        setVolume(currentVolume);
+        setVolume(30);
         delay(10);
         int trackNumber = p1 - 100;
         if (trackNumber >= 1 && trackNumber <= 5) {
@@ -123,15 +122,11 @@ void parsePacket(String inLine) {
     }
     // ── RULE 3: RENDER BATTERY ON LEDS FROM PACKET FEED ──
     else if (cmdId == CMD_BATTERY_UPDATE) {
-        int greenLeds = (p2 > 0) ? (p1 * TOTAL_NUM_PIXELS) / p2 : 0;
+        int greenLeds = (p1 * TOTAL_NUM_PIXELS) / p2;
         greenLeds = constrain(greenLeds, 0, TOTAL_NUM_PIXELS);
         clearRing();
         for (int i = 0; i < greenLeds; i++) {
             setSinglePixel(i, 0, 150, 0);
         }
-    }
-    else if (cmdId == CMD_SET_VOLUME) {
-        currentVolume = constrain(p1, 0, 30);
-        setVolume(currentVolume);
     }
 }
