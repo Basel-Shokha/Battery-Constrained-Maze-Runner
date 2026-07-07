@@ -764,6 +764,22 @@ async function animateTelemetryLeg(stepIdx) {
   telAnimating = false;
 }
 
+function rotateTelemetryRover(dir) {
+  const rv = document.getElementById('rover-anim');
+  if (rv.style.display === 'none') return;
+  const svg = rv.querySelector('svg');
+  if (!svg) return;
+  const deg = {north:0, east:90, south:180, west:270}[dir] ?? 0;
+  svg.style.transform = `rotate(${deg}deg)`;
+  telCurrentDir = dir;
+}
+
+function showTelemetryCharging(isCharging) {
+  const rv = document.getElementById('rover-anim');
+  if (!rv) return;
+  rv.classList.toggle('rover-charging', isCharging);
+}
+
 async function animateRover(steps) {
   if (animRunning) { animCancel = true; await sleep(200); }
   animCancel = false; animRunning = true;
@@ -1230,6 +1246,7 @@ function loadGalleryMaze(data) {
 
     if (stateLabel === "DRIVING" || stateLabel === "RUNNING") {
       stateEl.className = "status-success";
+      showTelemetryCharging(false);
       if (currentPath && currentPath.length > 1) {
         if (!telAnimating) animCancel = true;
         const staticRover = document.getElementById('static-start-rover');
@@ -1258,10 +1275,32 @@ function loadGalleryMaze(data) {
         document.getElementById('path-status').innerHTML =
           `<span class="status-warn">Live telemetry connected. Click SOLVE first so the screen knows the rover path.</span>`;
       }
-    } else if (stateLabel === "PIVOT_TURNING") {
+    } else if (stateLabel === "PIVOT_TURNING" || stateLabel === "TURNING") {
       stateEl.className = "status-warn";
+      showTelemetryCharging(false);
+      if (currentPath && currentPath.length > 1) {
+        if (telPathRef !== currentPath) {
+          telLegs = telBuildLegs(currentPath);
+          telPathRef = currentPath;
+          telCurrentCell = null;
+          telCurrentDir = robotDirection;
+        }
+        const leg = telLegs && telLegs[stepIdx];
+        if (leg) {
+          rotateTelemetryRover(leg.heading);
+          document.getElementById('step-badge').style.display = 'inline';
+          document.getElementById('step-badge').textContent =
+            `turning to ${leg.heading.toUpperCase()}`;
+        }
+      }
+    } else if (stateLabel === "CHARGING") {
+      stateEl.className = "status-warn";
+      showTelemetryCharging(true);
+      document.getElementById('step-badge').style.display = 'inline';
+      document.getElementById('step-badge').textContent = 'charging';
     } else {
       stateEl.className = "status-warn";
+      showTelemetryCharging(false);
       telLastStep = -1;
       telAnimating = false;
     }

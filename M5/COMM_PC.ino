@@ -37,12 +37,16 @@ void connectWiFi() {
   M5.Lcd.fillScreen(BLACK);
 }
 
+const char* getTelemetryStateLabel() {
+    if (state != 1) return "IDLE";
+    if (currentPhase == WALKING_FWD) return "RUNNING";
+    if (currentPhase == TURNING || currentPhase == VERIFYING_TURN) return "TURNING";
+    if (currentPhase == CHARGE_HANDSHAKE || currentPhase == CHARGING_EXEC || currentPhase == POST_CHARGE_CHIRP) return "CHARGING";
+    return "RUNNING";
+}
+
 // ── UNACKNOWLEDGED HIGH-FREQUENCY TELEMETRY OUTFLOW ─────────
 void streamTelemetryToPC(unsigned long now) {
-    ///#GEMINI
-    // Explicit Blackout Guard: Mute streaming if running and not actively walking forward
-    if (state == 1 && currentPhase != WALKING_FWD) return;
-
     ///#GEMINI
     // Utilizing your customizable telemetry rate parameter
     if (now - lastPcStreamTime >= TELEMETRY_INTERVAL_MS) { 
@@ -53,8 +57,9 @@ void streamTelemetryToPC(unsigned long now) {
         char url[128];
         sprintf(url, "http://%s:%s/update_telemetry", SERVER_IP, SERVER_PORT);
         http.begin(url);
+        http.setTimeout(120);
         http.addHeader("Content-Type", "application/json");
-        const char* stateLabel = (state == 1) ? "RUNNING" : "IDLE";
+        const char* stateLabel = getTelemetryStateLabel();
         char jsonBuf[256];
         sprintf(jsonBuf, "{\"stepIdx\":%d,\"yaw\":%.1f,\"left\":%d,\"front\":%d,\"right\":%d,\"state\":\"%s\"}",
                 activeStepIndex, yaw, s_left, s_front, s_right, stateLabel);
@@ -185,9 +190,10 @@ void pollResetRequest() {
     char url[128];
     sprintf(url, "http://%s:%s/get_reset", SERVER_IP, SERVER_PORT);
     http.begin(url);
+    http.setTimeout(120);
     if (http.GET() == HTTP_CODE_OK) {
         String payload = http.getString();
-        if (payload.indexOf("\"reset\\\":true") >= 0) {
+        if (payload.indexOf("\"reset\":true") >= 0) {
             resetRunState();
             sendPCNotification("RUN_RESET_ACK", 1);
             Serial.println("STATUS:RESET_VIA_SERVER_CMD");

@@ -11,6 +11,7 @@ const int CMD_PLAY_AUDIO     = 1;
 const int CMD_STOP_AUDIO     = 2;
 const int CMD_START_CHARGE   = 3;
 const int CMD_BATTERY_UPDATE = 4;
+const int CMD_SET_VOLUME     = 5;
 
 const int AUDIO_MISSION_START = 101;
 const int AUDIO_GOING_STATION = 102;
@@ -130,8 +131,8 @@ void setup() {
   M5.Lcd.setRotation(3); M5.Lcd.fillScreen(BLACK); M5.Lcd.setTextSize(2);
   connectWiFi(); 
   
-  // Sync volume preference over to the peripheral hardware
-  sendPeripheralCmd(CMD_BATTERY_UPDATE, MP3_VOLUME, MP3_VOLUME);
+  // Sync volume preference over to the peripheral hardware.
+  sendPeripheralCmd(CMD_SET_VOLUME, MP3_VOLUME, 0);
 
   M5.Lcd.fillScreen(BLACK); M5.Lcd.setTextColor(YELLOW);
   M5.Lcd.println("Calibrating Gyro...");
@@ -153,9 +154,7 @@ void loop() {
   receivePeripheralTelemetry();
 
   // ── PC NETWORK STREAMING CONTROL ──
-  if (state == 0) {
-      handlePCNetworking(now);
-  }
+  handlePCNetworking(now);
 
   if (state == 1) {
     // ── GLOBAL SIDE-WALL GUARD ──

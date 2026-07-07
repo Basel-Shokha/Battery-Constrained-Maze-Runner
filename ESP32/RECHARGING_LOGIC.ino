@@ -3,6 +3,7 @@
 //  Call runRechargingMode() anywhere and it blocks for exactly
 //  8.5 seconds while playing the charge animation + audio.
 // ============================================================
+#include <math.h>
 
 // Functions from LED.ino
 extern void clearRing();
@@ -13,43 +14,43 @@ extern void setSinglePixel(uint8_t index, uint8_t r, uint8_t g, uint8_t b);
 extern void setVolume(uint8_t volume);
 extern void playTrack(uint8_t directory, uint8_t trackNumber);
 
-// ── Sequential blue sweep (one full pass around the ring) ──
-void blueSweep() {
+// ── Sequential fill, used for the charging animation ──
+void fillChargePixels(uint8_t filledCount, uint8_t pulse) {
     clearRing();
     for (int i = 0; i < 16; i++) {
-        setSinglePixel(i, 0, 0, 255);
-        delay(100);
+        if (i < filledCount) {
+            setSinglePixel(i, 0, 120 + pulse, 20);
+        } else {
+            setSinglePixel(i, 0, 0, 35 + pulse);
+        }
+    }
+}
+
+void showFullCharge() {
+    clearRing();
+    for (int i = 0; i < 16; i++) {
+        setSinglePixel(i, 0, 180, 0);
     }
 }
 
 // ── Full 8.5 second recharging cycle ────────────────────────
-// Stage 1: 2s solid blue
-// Stage 2: sweep #1 (~1.5s)
-// Stage 3: sweep #2 (~1.5s)
 // Audio plays in parallel at the start (fire-and-forget over UART)
 void runRechargingMode() {
     Serial.println("[RECHARGE] Starting 8.5s cycle...");
-    // Kick off audio - non-blocking, module plays independently
-    setVolume(30);
-    
+
     playTrack(1, 2);
-    // Charging tune track
 
-    // Stage 1: solid blue for 2 seconds
-    setRingColor(0, 0, 255);
-    delay(2000);
+    const unsigned long chargeDurationMs = 8500;
+    const unsigned long startMs = millis();
+    while (millis() - startMs < chargeDurationMs) {
+        unsigned long elapsed = millis() - startMs;
+        uint8_t filled = constrain((int)((elapsed * 16UL) / chargeDurationMs) + 1, 1, 16);
+        uint8_t pulse = (uint8_t)((sinf(elapsed * 0.008f) + 1.0f) * 35.0f);
+        fillChargePixels(filled, pulse);
+        delay(120);
+    }
 
-    // Stage 2: first sweep
-    blueSweep();
-
-    // Stage 3: second sweep
-    blueSweep();
-
-    ///#GEMINI
-    // Pad the remaining duration to let the full 8.5 second audio track play out before signaling completion
-    delay(3300);
-
-    // Cleanup
-    clearRing();
+    showFullCharge();
+    delay(700);
     Serial.println("[RECHARGE] Cycle complete.");
 }
