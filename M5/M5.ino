@@ -38,16 +38,22 @@ bool chargeStartAckReceived = false;
 bool esp32ChargeFinished     = false;
 unsigned long handshakeResendTime = 0;
 unsigned long postChargeTimer      = 0;
+
 // ── TUNABLE CONFIGURATION PARAMETERS (EDIT HERE) ──
 ///#GEMINI
-unsigned long FIRST_GRID_BLIND_TIME = 1500;
-// Updated: Time (ms) for 1st grid acceleration profile
+unsigned long FIRST_GRID_BLIND_TIME = 1500; // Time (ms) for 1st grid acceleration profile
 ///#GEMINI
-unsigned long REST_GRID_BLIND_TIME  = 1500;
-// Updated: Time (ms) added for each extra grid square
+unsigned long REST_GRID_BLIND_TIME  = 1500; // Time (ms) added for each extra grid square
 ///#GEMINI
-int8_t BASE_TURN_SPEED              = 16;
-// Tunable: Raised to clear stiction stalls!
+int8_t BASE_TURN_SPEED              = 23;   // Raised to clear stiction stalls!
+///#GEMINI
+uint8_t MP3_VOLUME                  = 25;   // Master Volume level parameter (0-30)
+///#GEMINI
+int AUDIO_MISSION_START_TRACK       = 1;    // Track 1: Standard mission start message
+///#GEMINI
+int AUDIO_GOING_STATION_TRACK       = 3;    // Track 3: "Going to station" message
+///#GEMINI
+int AUDIO_MISSION_COMPLETE_TRACK    = 4;    // Track 4: Mission complete victory chime
 
 // ── BLIND SPOT TIMERS & STRAFING FLAGS ──────────────────
 int8_t lastStepIndex          = -1;
@@ -58,8 +64,7 @@ volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
 unsigned long settleTimer    = 0;
-int16_t baselineSpeed        = 25;
-// Main corridor driving speed fixed at 25
+int16_t baselineSpeed        = 25; // Main corridor driving speed
 
 unsigned long lastStuckCheckTime = 0;
 float lastStuckCheckYaw          = 0.0f;
@@ -109,6 +114,10 @@ void resetRunState() {
     isStrafingRight = false;
     antiStuckSpeedBoost = 0;
 
+    ///#GEMINI
+    chargeStartAckReceived = false;
+    esp32ChargeFinished    = false;
+
     resetSpeedHistory();
     Serial.println("[RESET INTERRUPT] Local run state fully purged. Return to IDLE.");
 }
@@ -120,6 +129,10 @@ void setup() {
   M5.IMU.SetGyroFsr(MPU6886::GFS_250DPS);
   M5.Lcd.setRotation(3); M5.Lcd.fillScreen(BLACK); M5.Lcd.setTextSize(2);
   connectWiFi(); 
+  
+  // Sync volume preference over to the peripheral hardware
+  sendPeripheralCmd(CMD_BATTERY_UPDATE, MP3_VOLUME, MP3_VOLUME);
+
   M5.Lcd.fillScreen(BLACK); M5.Lcd.setTextColor(YELLOW);
   M5.Lcd.println("Calibrating Gyro...");
   calibrateGyro();
@@ -129,18 +142,17 @@ void setup() {
 
 void loop() {
   M5.update();
-  // Poll side button presses natively
   updateYaw(); 
   unsigned long now = millis();
-  // ── INSTANT INTERRUPT RESET ──
+
   if (M5.BtnB.wasPressed() || (Serial.available() > 0 && Serial.read() == 'r')) {
       resetRunState();
-      return; 
+      return;
   }
 
   receivePeripheralTelemetry();
 
-  // ── PC NETWORK BLACKOUT DURING ACTIVE RUNS ──
+  // ── PC NETWORK STREAMING CONTROL ──
   if (state == 0) {
       handlePCNetworking(now);
   }
@@ -148,30 +160,23 @@ void loop() {
   if (state == 1) {
     // ── GLOBAL SIDE-WALL GUARD ──
     if (!isStrafingLeft && !isStrafingRight) {
-        if (s_left > 0 && s_left <= 50) { isStrafingRight = true;
-        } 
-        else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true;
-        }
+        if (s_left > 0 && s_left <= 50) { isStrafingRight = true; } 
+        else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true; }
     }
 
     if (isStrafingRight) {
-        if (s_left >= 90) { isStrafingRight = false;
-        } 
-        else { setMotors(baselineSpeed, -baselineSpeed, -baselineSpeed, baselineSpeed); goto renderDisplayLink;
-        }
+        if (s_left >= 90) { isStrafingRight = false; } 
+        else { setMotors(baselineSpeed, -baselineSpeed, -baselineSpeed, baselineSpeed); goto renderDisplayLink; }
     }
 
     if (isStrafingLeft) {
-        if (s_right >= 90) { isStrafingLeft = false;
-        } 
-        else { setMotors(-baselineSpeed, baselineSpeed, baselineSpeed, -baselineSpeed); goto renderDisplayLink;
-        }
+        if (s_right >= 90) { isStrafingLeft = false; } 
+        else { setMotors(-baselineSpeed, baselineSpeed, baselineSpeed, -baselineSpeed); goto renderDisplayLink; }
     }
 
     switch (currentPhase) {
       
       case WALKING_FWD: {
-        // ── PURE DRIVING CORRIDOR TIME LATCH ──
         if (activeStepIndex != lastStepIndex) {
             stepStartTime = now;
             lastStepIndex = activeStepIndex;
@@ -184,7 +189,6 @@ void loop() {
           MovementStep currentLeg = missionPipeline[activeStepIndex];
           uint16_t stopThresholdMm = (currentLeg.stopLimitGrids * 300) + 150;
 
-          // ── VARIABLE PROFILE BLIND TIMER CALCULATION ──
           unsigned long blindSpotDuration = 0;
           if (currentLeg.gridsToCross > 0) {
               blindSpotDuration = FIRST_GRID_BLIND_TIME + (currentLeg.gridsToCross - 1) * REST_GRID_BLIND_TIME;
@@ -193,6 +197,13 @@ void loop() {
           if (!isBlindSpotActive && s_front > 0 && s_front <= stopThresholdMm) {
             stopMotors();
             if (currentLeg.action == 1) {
+              sendPCNotification("ARRIVED_STATION", activeStepIndex);
+              
+              ///#GEMINI
+              // Reset communication handshake states instantly upon arrival at the station lane
+              chargeStartAckReceived = false;
+              esp32ChargeFinished    = false;
+              
               currentPhase = CHARGE_HANDSHAKE;
             } else {
               activeStepIndex++;
@@ -214,6 +225,7 @@ void loop() {
               sendPeripheralCmd(CMD_START_CHARGE, 1, 0);
           }
         } else {
+          sendPCNotification("CHARGING_START", activeStepIndex);
           currentPhase = CHARGING_EXEC;
         }
         break;
@@ -221,10 +233,10 @@ void loop() {
 
       case CHARGING_EXEC: {
         if (esp32ChargeFinished) {
+            sendPCNotification("CHARGING_END", activeStepIndex);
             sendPeripheralCmd(CMD_STOP_AUDIO, 0, 0);
             sendPeripheralCmd(CMD_BATTERY_UPDATE, 8, 8); 
             postChargeTimer = now;
-            sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION, 0); 
             currentPhase = POST_CHARGE_CHIRP;
         }
         break;
@@ -244,7 +256,8 @@ void loop() {
         if (activeStepIndex >= totalMissionSteps) {
           state = 0;
           stopMotors();
-          sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_VICTORY, 0);
+          sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_MISSION_COMPLETE_TRACK, 0);
+          sendPCNotification("MISSION_COMPLETE", 200);
           break;
         }
 
@@ -256,7 +269,12 @@ void loop() {
             if (currentRobotDirection == nextDir) {
                 targetHeading = yaw;
                 resetSpeedHistory(); lastSampleTime = millis();
-                currentPhase = WALKING_FWD; break;
+                currentPhase = WALKING_FWD; 
+                
+                if (missionPipeline[activeStepIndex].action == 1) {
+                    sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION_TRACK, 0);
+                }
+                break;
             }
 
             float relativeAngleDelta = 0.0f;
@@ -265,6 +283,8 @@ void loop() {
             else if ((currentRobotDirection + 3) % 4 == nextDir) relativeAngleDelta = -90.0f; 
 
             turnTargetYaw = wrap360(yaw + relativeAngleDelta);
+            sendPCNotification("TURNING_START", (int)turnTargetYaw);
+
             lastStuckCheckTime = now;
             lastStuckCheckYaw = yaw; antiStuckSpeedBoost = 0;
             currentPhase = TURNING;
@@ -281,7 +301,6 @@ void loop() {
           break;
         }
         
-        // ── GRACEFUL WATCHDOG (+1 STICKING COMPENSATION) ──
         if (now - lastStuckCheckTime >= 300) {
           float deltaYaw = fabsf(angleDiff(yaw, lastStuckCheckYaw));
           if (deltaYaw < 10.0f) antiStuckSpeedBoost = constrain(antiStuckSpeedBoost + 1, 0, 30);
@@ -289,7 +308,6 @@ void loop() {
           lastStuckCheckYaw = yaw; lastStuckCheckTime = now;
         }
 
-        // Uses your parameter configuration + active watchdog padding
         int8_t finalizedSpeed = BASE_TURN_SPEED + antiStuckSpeedBoost;
         if (error > 0) setMotors(finalizedSpeed, -finalizedSpeed, finalizedSpeed, -finalizedSpeed);
         else           setMotors(-finalizedSpeed, finalizedSpeed, -finalizedSpeed, finalizedSpeed);
@@ -301,18 +319,23 @@ void loop() {
         float error = angleDiff(turnTargetYaw, yaw);
         if (fabsf(error) <= 2.0f) {
           targetHeading = turnTargetYaw;
+          sendPCNotification("TURN_CONFIRMED_ACK", (int)targetHeading);
+
           currentRobotDirection = missionPipeline[activeStepIndex].orientation;
           resetSpeedHistory(); lastSampleTime = millis();
           currentPhase = WALKING_FWD;
+          if (missionPipeline[activeStepIndex].action == 1) {
+              sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION_TRACK, 0);
+          }
         } else {
-          lastStuckCheckTime = now; lastStuckCheckYaw = yaw;
+          lastStuckCheckTime = now;
+          lastStuckCheckYaw = yaw;
           currentPhase = TURNING;
         }
         break;
       }
     }
-  } else { stopMotors();
-  }
+  } else { stopMotors(); }
 
   renderDisplayLink:
   if (now - lastDrawTime > 100) {

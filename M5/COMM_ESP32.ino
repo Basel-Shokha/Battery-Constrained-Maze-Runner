@@ -10,7 +10,6 @@ extern bool chargeStartAckReceived;
 extern bool esp32ChargeFinished;
 
 String m5UartBuffer = "";
-
 void initPeripheralUART() {
     ESP32Serial.begin(115200, SERIAL_8N1, 32, 33);
 }
@@ -19,10 +18,8 @@ void receivePeripheralTelemetry() {
     // ── RULE 1 & 2: CHARACTER-STREAM TELEMETRY ACCUMULATION ──
     while (ESP32Serial.available() > 0) {
         char c = ESP32Serial.read();
-        
         if (c == '\n') {
             m5UartBuffer.trim();
-            
             // Unacknowledged continuous distance stream
             if (m5UartBuffer.startsWith("DIST:")) {
                 int parsedLeft, parsedFront, parsedRight;
@@ -55,4 +52,3 @@ void receivePeripheralTelemetry() {
 void sendPeripheralCmd(int commandId, int param1, int param2) {
     ESP32Serial.printf("PACKET:%d,%d,%d\n", commandId, param1, param2);
 }
-

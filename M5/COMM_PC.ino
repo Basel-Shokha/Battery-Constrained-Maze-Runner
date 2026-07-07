@@ -10,7 +10,6 @@ extern uint8_t totalMissionSteps;
 extern int8_t activeStepIndex;
 extern int state;
 extern enum DrivePhase currentPhase;
-
 extern volatile uint16_t s_left, s_front, s_right;
 extern float yaw;
 extern const int CMD_PLAY_AUDIO, AUDIO_MISSION_START, AUDIO_ROUTE_ERROR;
@@ -27,6 +26,10 @@ unsigned long lastPcStreamTime       = 0;
 unsigned long lastInstructionPollTime = 0;
 unsigned long lastControlPollTime     = 0;
 
+///#GEMINI
+// ── TUNABLE CONFIGURATION PARAMETERS (EDIT HERE) ──
+unsigned long TELEMETRY_INTERVAL_MS = 1000; // Customizable telemetry streaming interval (ms)
+
 void connectWiFi() {
   M5.Lcd.setTextColor(CYAN); M5.Lcd.println("Connecting Wi-Fi...");
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -36,7 +39,13 @@ void connectWiFi() {
 
 // ── UNACKNOWLEDGED HIGH-FREQUENCY TELEMETRY OUTFLOW ─────────
 void streamTelemetryToPC(unsigned long now) {
-    if (now - lastPcStreamTime >= 200) { 
+    ///#GEMINI
+    // Explicit Blackout Guard: Mute streaming if running and not actively walking forward
+    if (state == 1 && currentPhase != WALKING_FWD) return;
+
+    ///#GEMINI
+    // Utilizing your customizable telemetry rate parameter
+    if (now - lastPcStreamTime >= TELEMETRY_INTERVAL_MS) { 
         lastPcStreamTime = now;
         if (WiFi.status() != WL_CONNECTED) return;
         
@@ -45,21 +54,18 @@ void streamTelemetryToPC(unsigned long now) {
         sprintf(url, "http://%s:%s/update_telemetry", SERVER_IP, SERVER_PORT);
         http.begin(url);
         http.addHeader("Content-Type", "application/json");
-
         const char* stateLabel = (state == 1) ? "RUNNING" : "IDLE";
         char jsonBuf[256];
         sprintf(jsonBuf, "{\"stepIdx\":%d,\"yaw\":%.1f,\"left\":%d,\"front\":%d,\"right\":%d,\"state\":\"%s\"}",
                 activeStepIndex, yaw, s_left, s_front, s_right, stateLabel);
-
         http.POST(jsonBuf);
         http.end();
     }
 }
 
-// ── RULE 5: SERVER HANDSHAKE FOR EXPANDED DISCRETE WORK EVENTS ──
+// ── SERVER HANDSHAKE FOR EXPANDED DISCRETE WORK EVENTS ──
 void sendPCNotification(const char* eventType, int logValue) {
     if (WiFi.status() != WL_CONNECTED) return;
-    
     HTTPClient http;
     char url[128];
     sprintf(url, "http://%s:%s/notify_event", SERVER_IP, SERVER_PORT);
@@ -68,7 +74,6 @@ void sendPCNotification(const char* eventType, int logValue) {
     
     char jsonBuf[128];
     sprintf(jsonBuf, "{\"event\":\"%s\",\"value\":%d}", eventType, logValue);
-    
     int httpCode = http.POST(jsonBuf);
     if (httpCode == HTTP_CODE_OK) {
         Serial.printf("[PC-HANDSHAKE-ACK] Event processed successfully: %s\n", eventType);
@@ -92,7 +97,8 @@ void pollInstructionsFromServer() {
         payload.trim();
 
         if (payload.length() == 0 || payload.startsWith("START:1,0")) {
-            http.end(); return;
+            http.end();
+            return;
         }
 
         static String lastPayload = "";
@@ -105,15 +111,22 @@ void pollInstructionsFromServer() {
             if (endIdx == -1) endIdx = payload.length();
             String line = payload.substring(startIdx, endIdx);
             line.trim(); startIdx = endIdx + 1;
-
-            // ── RULE 5: WIDER COMMAND CONTROLS (PC COMMANDS START JOURNEY) ──
+            
             if (line.startsWith("CMD:START_JOURNEY")) {
                 if (totalMissionSteps > 0 && state == 0) {
                     activeStepIndex = 0;
                     extern float targetHeading; targetHeading = yaw; 
                     resetSpeedHistory(); currentPhase = WALKING_FWD;
                     
-                    sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_MISSION_START, 0);
+                    ///#GEMINI
+                    // Check if the first step ends with a charge station right out of the gate
+                    extern int AUDIO_GOING_STATION_TRACK;
+                    extern int AUDIO_MISSION_START_TRACK;
+                    if (missionPipeline[0].action == 1) {
+                        sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION_TRACK, 0);
+                    } else {
+                        sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_MISSION_START_TRACK, 0);
+                    }
                     delay(5000); 
                     
                     state = 1; M5.Lcd.fillScreen(BLACK);
@@ -145,7 +158,6 @@ void pollInstructionsFromServer() {
     http.end();
 }
 
-
 void pollCalibrationRequest() {
     if (WiFi.status() != WL_CONNECTED) return;
     HTTPClient http;
@@ -167,7 +179,6 @@ void pollCalibrationRequest() {
     http.end();
 }
 
-
 void pollResetRequest() {
     if (WiFi.status() != WL_CONNECTED) return;
     HTTPClient http;
@@ -176,7 +187,7 @@ void pollResetRequest() {
     http.begin(url);
     if (http.GET() == HTTP_CODE_OK) {
         String payload = http.getString();
-        if (payload.indexOf("\"reset\":true") >= 0) {
+        if (payload.indexOf("\"reset\\\":true") >= 0) {
             resetRunState();
             sendPCNotification("RUN_RESET_ACK", 1);
             Serial.println("STATUS:RESET_VIA_SERVER_CMD");
@@ -185,25 +196,16 @@ void pollResetRequest() {
     http.end();
 }
 
-
-
 void handlePCNetworking(unsigned long now) {
     if (now - lastControlPollTime >= 500) {
         lastControlPollTime = now;
         pollResetRequest();
     }
-
     if (state == 0 && (now - lastInstructionPollTime >= 1500)) {
         lastInstructionPollTime = now;
         pollInstructionsFromServer();
         pollCalibrationRequest();
-
     }
-    streamTelemetryToPC(now);
+    streamTelemetryToPC(now); 
 }
 
-void triggerNetworkAlert(int conditionId) {
-    if (conditionId == 404) {
-        sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_ROUTE_ERROR, 0);
-    }
-}
