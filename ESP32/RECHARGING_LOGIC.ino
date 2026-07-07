@@ -29,11 +29,11 @@ void blueSweep() {
 // Audio plays in parallel at the start (fire-and-forget over UART)
 void runRechargingMode() {
     Serial.println("[RECHARGE] Starting 8.5s cycle...");
-
     // Kick off audio - non-blocking, module plays independently
     setVolume(30);
     
-    playTrack(1, 2);  // Charging tune track
+    playTrack(1, 2);
+    // Charging tune track
 
     // Stage 1: solid blue for 2 seconds
     setRingColor(0, 0, 255);
@@ -45,8 +45,11 @@ void runRechargingMode() {
     // Stage 3: second sweep
     blueSweep();
 
+    ///#GEMINI
+    // Pad the remaining duration to let the full 8.5 second audio track play out before signaling completion
+    delay(3300);
+
     // Cleanup
     clearRing();
     Serial.println("[RECHARGE] Cycle complete.");
 }
-

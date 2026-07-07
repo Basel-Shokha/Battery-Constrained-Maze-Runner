@@ -7,7 +7,6 @@
 #define TOTAL_NUM_PIXELS 16
 
 HardwareSerial M5Serial(2);
-
 uint16_t distLeft = 0, distFront = 0, distRight = 0;
 unsigned long lastSendTime = 0;
 
@@ -29,7 +28,6 @@ extern bool resetMP3();
 
 extern void initSensors();
 extern void readSensors();
-
 // Linked directly to your untouched function in RECHARGING_LOGIC.ino
 extern void runRechargingMode();
 
@@ -50,8 +48,7 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
-
-    // ── RULE 2: COMPLETION HANDSHAKE RESEND TRACKER ──
+// ── RULE 2: COMPLETION HANDSHAKE RESEND TRACKER ──
     if (isAwaitingChargeDoneAck) {
         if (now - notifyResendTime >= 100) { 
             notifyResendTime = now;
@@ -72,8 +69,7 @@ void loop() {
         char c = M5Serial.read();
         if (c == '\n') {
             inputBuffer.trim();
-            
-            // Check for completion confirmation from M5
+// Check for completion confirmation from M5
             if (inputBuffer == "ACK:CHARGE_DONE") {
                 isAwaitingChargeDoneAck = false;
                 lastOrangeUpdateTime = millis(); 
@@ -117,11 +113,9 @@ void parsePacket(String inLine) {
     }
     // ── RULE 2: RECHARGING INTERCEPT PROMPTS ACK:3 BEFORE TRIGGERING YOUR FUNCTION ──
     else if (cmdId == CMD_START_CHARGE) {
-        M5Serial.println("ACK:3"); 
-        
+        M5Serial.println("ACK:3");
         // Triggers your untouched function directly
         runRechargingMode();
-        
         // Arm completion handshake once your function returns
         isAwaitingChargeDoneAck = true;
         notifyResendTime = 0;
@@ -136,4 +130,3 @@ void parsePacket(String inLine) {
         }
     }
 }
-
