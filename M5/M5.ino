@@ -43,29 +43,23 @@ bool esp32ChargeFinished     = false;
 unsigned long handshakeResendTime = 0;
 unsigned long postChargeTimer      = 0;
 
+// ── TUNABLE CONFIGURATION PARAMETERS (EDIT HERE) ──
+unsigned long FIRST_GRID_BLIND_TIME = 1500; // Updated: Time (ms) for 1st grid acceleration profile
+unsigned long REST_GRID_BLIND_TIME  = 1500; // Updated: Time (ms) added for each extra grid square
+int8_t BASE_TURN_SPEED              = 14;   // Tunable: Raised from 10 to clear stiction stalls!
+
 // ── BLIND SPOT TIMERS & STRAFING FLAGS ──────────────────
 int8_t lastStepIndex          = -1;
 unsigned long stepStartTime   = 0;
 bool isStrafingLeft           = false;
 bool isStrafingRight          = false;
 
-// ── RELATIVE FRONT-STOP TUNING ─────────────────────────────
-const int GRID_MM             = 300;   // physical length of one grid cell (mm)
-const int FRONT_STOP_MARGIN   = 100;   // R0 must clear grids*GRID_MM by this much to be trusted (mm)
-const int FRONT_STOP_MAX_MM   = 3000;  // readings beyond this = "no wall in range" -> use fallback
-const int FRONT_STOP_DEBOUNCE = 3;     // consecutive qualifying frames required before stopping
-
-// ── RELATIVE FRONT-STOP STATE (latched fresh each leg) ─────
-uint16_t legStartFrontMm   = 0;        // R0: front reading captured when this leg's drive begins
-uint16_t frontStopTargetMm = 0;        // target = R0 - gridsToCross*GRID_MM
-bool     relativeStopArmed = false;    // true when R0 was a valid wall with room to move
-uint8_t  frontStopHits     = 0;        // debounce counter for the stop condition
-
 volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
 unsigned long settleTimer    = 0;
-int16_t baselineSpeed        = 20; 
+
+int16_t baselineSpeed        = 25; // Main corridor driving speed fixed at 25
 
 unsigned long lastStuckCheckTime = 0;
 float lastStuckCheckYaw          = 0.0f;
@@ -104,44 +98,19 @@ const char* getDirectionName(Direction dir) {
 }
 
 void resetRunState() {
-  stopMotors();
-  sendPeripheralCmd(CMD_STOP_AUDIO, 0, 0);
+    stopMotors();               
+    state = 0;                  
+    activeStepIndex = -1;       
+    totalMissionSteps = 0;      
+    lastStepIndex = -1;         
+    
+    currentPhase = WALKING_FWD; 
+    isStrafingLeft = false;
+    isStrafingRight = false;
+    antiStuckSpeedBoost = 0;
 
-  state                  = 0;
-  activeStepIndex        = -1;
-  currentRobotDirection  = initialSpawnDirection;
-  currentPhase           = WALKING_FWD;
-
-  chargeStartAckReceived = false;
-  esp32ChargeFinished    = false;
-  handshakeResendTime    = 0;
-  postChargeTimer        = 0;
-
-  lastStepIndex          = -1;
-  stepStartTime          = 0;
-  isStrafingLeft         = false;
-  isStrafingRight        = false;
-
-  legStartFrontMm        = 0;
-  frontStopTargetMm      = 0;
-  relativeStopArmed      = false;
-  frontStopHits          = 0;
-
-  settleTimer            = 0;
-  lastStuckCheckTime     = 0;
-  lastStuckCheckYaw      = yaw;
-  antiStuckSpeedBoost    = 0;
-
-  targetHeading          = yaw;
-  turnTargetYaw          = yaw;
-  resetSpeedHistory();
-  lastSampleTime         = millis();
-
-  M5.Lcd.fillScreen(BLACK);
-  M5.Lcd.setTextColor(CYAN, BLACK);
-  M5.Lcd.setCursor(0, 0);
-  M5.Lcd.println("Run Reset");
-  M5.Lcd.println("Ready");
+    resetSpeedHistory();        
+    Serial.println("[RESET INTERRUPT] Local run state fully purged. Return to IDLE.");
 }
 
 void setup() {
@@ -158,97 +127,67 @@ void setup() {
 }
 
 void loop() {
+  M5.update(); // Poll side button presses natively
   updateYaw(); 
   unsigned long now = millis();
 
+  // ── INSTANT INTERRUPT RESET ──
+  if (M5.BtnB.wasPressed() || (Serial.available() > 0 && Serial.read() == 'r')) {
+      resetRunState();
+      return; 
+  }
+
   receivePeripheralTelemetry();
-  handlePCNetworking(now);
+
+  // ── PC NETWORK BLACKOUT DURING ACTIVE RUNS ──
+  if (state == 0) {
+      handlePCNetworking(now);
+  }
 
   if (state == 1) {
-    // ── GLOBAL SIDE-WALL GUARD (BYPASSES GYRO ENTIRELY) ──
+    // ── GLOBAL SIDE-WALL GUARD ──
     if (!isStrafingLeft && !isStrafingRight) {
-        if (s_left > 0 && s_left <= 50) { 
-            isStrafingRight = true;
-        } else if (s_right > 0 && s_right <= 50) { 
-            isStrafingLeft = true;
-        }
+        if (s_left > 0 && s_left <= 50) { isStrafingRight = true; } 
+        else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true; }
     }
 
     if (isStrafingRight) {
-        if (s_left >= 90) { 
-            isStrafingRight = false;
-        } else {
-            setMotors(45, -45, -45, 45);
-            goto renderDisplayLink; 
-        }
+        if (s_left >= 90) { isStrafingRight = false; } 
+        else { setMotors(baselineSpeed, -baselineSpeed, -baselineSpeed, baselineSpeed); goto renderDisplayLink; }
     }
 
     if (isStrafingLeft) {
-        if (s_right >= 90) { 
-            isStrafingLeft = false;
-        } else {
-            setMotors(-45, 45, 45, -45);
-            goto renderDisplayLink; 
-        }
+        if (s_right >= 90) { isStrafingLeft = false; } 
+        else { setMotors(-baselineSpeed, baselineSpeed, baselineSpeed, -baselineSpeed); goto renderDisplayLink; }
     }
 
-    // ── REGULAR MISSION DRIVE ENGINES ────────────────────────
     switch (currentPhase) {
       
       case WALKING_FWD: {
-        // ── FIXED LATCH: STARTS THE TIMER ONLY WHEN WE ACTUALLY BEGIN DRIVING ──
+        // ── PURE DRIVING CORRIDOR TIME LATCH ──
         if (activeStepIndex != lastStepIndex) {
-          stepStartTime = now;
-          lastStepIndex = activeStepIndex;
-          isStrafingLeft = false;
-          isStrafingRight = false;
-
-          // ── LATCH R0 FOR THIS LEG (relative front-stop) ──
-          int gridsMm       = missionPipeline[activeStepIndex].gridsToCross * GRID_MM;
-          legStartFrontMm   = s_front;
-          frontStopHits     = 0;
-          // Trust the relative method only if we latched a real wall with room to move.
-          if (legStartFrontMm > 0 &&
-              legStartFrontMm <= FRONT_STOP_MAX_MM &&
-              legStartFrontMm >= gridsMm + FRONT_STOP_MARGIN) {
-              frontStopTargetMm = (uint16_t)(legStartFrontMm - gridsMm);
-              relativeStopArmed = true;
-          } else {
-              relativeStopArmed = false;   // fall back to absolute threshold this leg
-          }
+            stepStartTime = now;
+            lastStepIndex = activeStepIndex;
+            isStrafingLeft = false;
+            isStrafingRight = false;
         }
 
         processParallelAlignment(now, lastSampleTime);
         if (activeStepIndex >= 0 && activeStepIndex < totalMissionSteps) {
           MovementStep currentLeg = missionPipeline[activeStepIndex];
+          uint16_t stopThresholdMm = (currentLeg.stopLimitGrids * 300) + 150;
 
-          // ── ARRIVAL TEST ────────────────────────────────────────
-          bool arrived = false;
-          if (relativeStopArmed) {
-            // RELATIVE: stop once the front wall has closed in by gridsToCross*300 mm
-            // from the reading we latched at the start of this leg.
-            if (s_front > 0 && s_front <= frontStopTargetMm) {
-              if (++frontStopHits >= FRONT_STOP_DEBOUNCE) arrived = true;
-            } else {
-              frontStopHits = 0;
-            }
-          } else {
-            // FALLBACK: no trustworthy wall at leg start -> original absolute rule.
-            uint16_t stopThresholdMm   = (currentLeg.stopLimitGrids * 300) + 150;
-            unsigned long blindSpotDur = currentLeg.gridsToCross * 1500;
-            bool isBlindSpotActive     = (now - stepStartTime < blindSpotDur);
-            if (!isBlindSpotActive && s_front > 0 && s_front <= stopThresholdMm) arrived = true;
+          // ── VARIABLE PROFILE BLIND TIMER CALCULATION ──
+          unsigned long blindSpotDuration = 0;
+          if (currentLeg.gridsToCross > 0) {
+              blindSpotDuration = FIRST_GRID_BLIND_TIME + (currentLeg.gridsToCross - 1) * REST_GRID_BLIND_TIME;
           }
+          bool isBlindSpotActive = (now - stepStartTime < blindSpotDuration);
 
-          if (arrived) {
+          if (!isBlindSpotActive && s_front > 0 && s_front <= stopThresholdMm) {
             stopMotors();
-            
             if (currentLeg.action == 1) {
-              sendPCNotification("ARRIVED_STATION", activeStepIndex);
-              chargeStartAckReceived = false;
-              esp32ChargeFinished    = false;
-              handshakeResendTime    = 0;
-              currentPhase           = CHARGE_HANDSHAKE;
+              currentPhase = CHARGE_HANDSHAKE;
             } else {
               activeStepIndex++;
               resetSpeedHistory();
@@ -269,7 +208,6 @@ void loop() {
               sendPeripheralCmd(CMD_START_CHARGE, 1, 0);
           }
         } else {
-          sendPCNotification("CHARGING_START", activeStepIndex);
           currentPhase = CHARGING_EXEC;
         }
         break;
@@ -279,8 +217,6 @@ void loop() {
         if (esp32ChargeFinished) {
             sendPeripheralCmd(CMD_STOP_AUDIO, 0, 0);
             sendPeripheralCmd(CMD_BATTERY_UPDATE, 8, 8); 
-            sendPCNotification("CHARGING_END", activeStepIndex);
-            
             postChargeTimer = now;
             sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION, 0); 
             currentPhase = POST_CHARGE_CHIRP;
@@ -302,33 +238,26 @@ void loop() {
         if (activeStepIndex >= totalMissionSteps) {
           state = 0; stopMotors();
           sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_VICTORY, 0);
-          sendPCNotification("MISSION_COMPLETE", 200);
           break;
         }
 
         MovementStep nextLeg = missionPipeline[activeStepIndex];
 
         if (currentPhase != TURNING) {
-            if (activeStepIndex == 0) {
-                currentRobotDirection = initialSpawnDirection;
-            }
-
+            if (activeStepIndex == 0) currentRobotDirection = initialSpawnDirection;
             Direction nextDir = nextLeg.orientation;
-            float relativeAngleDelta = 0.0f;
-
-            if ((currentRobotDirection + 1) % 4 == nextDir) {
-                relativeAngleDelta = 90.0f;  
-            } 
-            else if ((currentRobotDirection + 2) % 4 == nextDir) {
-                relativeAngleDelta = 180.0f; 
-            } 
-            else if ((currentRobotDirection + 3) % 4 == nextDir) {
-                relativeAngleDelta = -90.0f; 
+            
+            if (currentRobotDirection == nextDir) {
+                targetHeading = yaw; resetSpeedHistory(); lastSampleTime = millis();
+                currentPhase = WALKING_FWD; break;
             }
+
+            float relativeAngleDelta = 0.0f;
+            if ((currentRobotDirection + 1) % 4 == nextDir)      relativeAngleDelta = 90.0f;  
+            else if ((currentRobotDirection + 2) % 4 == nextDir) relativeAngleDelta = 180.0f; 
+            else if ((currentRobotDirection + 3) % 4 == nextDir) relativeAngleDelta = -90.0f; 
 
             turnTargetYaw = wrap360(yaw + relativeAngleDelta);
-
-            sendPCNotification("TURNING_START", (int)turnTargetYaw);
             lastStuckCheckTime = now; lastStuckCheckYaw = yaw; antiStuckSpeedBoost = 0;
             currentPhase = TURNING;
         }
@@ -344,16 +273,16 @@ void loop() {
           break;
         }
         
-        if (now - lastStuckCheckTime > 300) {
+        // ── GRACEFUL WATCHDOG (+1 STICKING COMPENSATION) ──
+        if (now - lastStuckCheckTime >= 300) {
           float deltaYaw = fabsf(angleDiff(yaw, lastStuckCheckYaw));
-          if (deltaYaw < 10.0f) antiStuckSpeedBoost = constrain(antiStuckSpeedBoost + 5, 0, 40);
+          if (deltaYaw < 10.0f) antiStuckSpeedBoost = constrain(antiStuckSpeedBoost + 1, 0, 30);
           else                  antiStuckSpeedBoost = 0;
           lastStuckCheckYaw = yaw; lastStuckCheckTime = now;
         }
 
-        int8_t baseTurningSpeed = (int8_t)constrain(absErr * 0.5f + 10, 10, 10);
-        int8_t finalizedSpeed   = baseTurningSpeed + antiStuckSpeedBoost;
-
+        // Uses your parameter configuration + active watchdog padding
+        int8_t finalizedSpeed = BASE_TURN_SPEED + antiStuckSpeedBoost;
         if (error > 0) setMotors(finalizedSpeed, -finalizedSpeed, finalizedSpeed, -finalizedSpeed);
         else           setMotors(-finalizedSpeed, finalizedSpeed, -finalizedSpeed, finalizedSpeed);
         break;
@@ -364,10 +293,7 @@ void loop() {
         float error = angleDiff(turnTargetYaw, yaw);
         if (fabsf(error) <= 2.0f) {
           targetHeading = turnTargetYaw;
-          sendPCNotification("TURN_CONFIRMED_ACK", (int)targetHeading);
-          
           currentRobotDirection = missionPipeline[activeStepIndex].orientation;
-
           resetSpeedHistory(); lastSampleTime = millis();
           currentPhase = WALKING_FWD; 
         } else {
@@ -376,9 +302,7 @@ void loop() {
         break;
       }
     }
-  } else { 
-    stopMotors();
-  }
+  } else { stopMotors(); }
 
   renderDisplayLink:
   if (now - lastDrawTime > 100) {
@@ -390,16 +314,9 @@ void loop() {
       M5.Lcd.setTextColor(YELLOW, BLACK); M5.Lcd.println("Awaiting Dispatch...");
     } else {
       M5.Lcd.setTextColor(GREEN, BLACK);  M5.Lcd.printf("RUNNING LEG: %d/%d\n", activeStepIndex + 1, totalMissionSteps);
-      M5.Lcd.setTextColor(WHITE, BLACK);
-      if (activeStepIndex >= 0 && activeStepIndex < totalMissionSteps) {
-        MovementStep activeLeg = missionPipeline[activeStepIndex];
-        M5.Lcd.printf("DIR: %s       \n", getDirectionName(activeLeg.orientation));
-        if (isStrafingLeft)       M5.Lcd.println("SAFETY: GUARD LEFT ");
-        else if (isStrafingRight) M5.Lcd.println("SAFETY: GUARD RIGHT");
-        else                      M5.Lcd.printf("Phase: %d     \n", currentPhase);
-      }
     }
     M5.Lcd.setTextColor(WHITE, BLACK); M5.Lcd.printf("L:%04d F:%04d R:%04d\n", s_left, s_front, s_right);
   }
   delay(2);
 }
+
