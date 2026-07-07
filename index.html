@@ -354,6 +354,16 @@ async function sendMazeToM5() {
   const req = buildRequestJSON(); // Wraps up your configured layout payload
 
   try {
+    const solveRes = await fetch('http://localhost:8085/solve', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(req)
+    });
+    if (solveRes.ok) {
+      const solution = await solveRes.json();
+      applyResponseData(solution, false);
+    }
+
     const res = await fetch('http://localhost:8085/send_maze', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
@@ -656,11 +666,8 @@ function placeRoverAt(r, c, dir) {
 }
 
 // ── LIVE TELEMETRY ROVER TRACKER ───────────────────────────────
-let telLegs = null, telPathRef = null, telLastStep = -1, telFrontR0 = 0, telLegStartMs = 0;
-let telLastProgress = 0;
-const GRID_MM_UI  = 300;    // must match the robot's grid cell size (mm)
-const FRONT_MAX_UI = 1300;  // VL53L1X Short-mode range ceiling (mm)
-const TEL_MS_PER_CELL = 1600;
+let telLegs = null, telPathRef = null, telLastStep = -1, telAnimating = false;
+let telCurrentCell = null, telCurrentDir = null;
 
 function telHeadingOf(a, b) {
   if (b[0] < a[0]) return 'north';
@@ -676,47 +683,10 @@ function telBuildLegs(path) {
   while (i < path.length - 1) {
     const h = telHeadingOf(path[i].cell, path[i + 1].cell); let j = i;
     while (j < path.length - 1 && telHeadingOf(path[j].cell, path[j + 1].cell) === h) j++;
-    legs.push({ start: path[i].cell, end: path[j].cell, heading: h, cells: j - i });
+    legs.push({ startIndex: i, endIndex: j, start: path[i].cell, end: path[j].cell, heading: h, cells: j - i });
     i = j;
   }
   return legs;
-}
-
-// Position #rover-anim at raw workspace pixels with a heading.
-function telPlaceRoverPixel(x, y, dir) {
-  const rv = document.getElementById('rover-anim');
-  rv.style.width = 'var(--rover-width)';
-  rv.style.height = 'var(--rover-length)';
-  rv.style.left = x + 'px';
-  rv.style.top  = y + 'px';
-  if (!rv.querySelector('svg')) rv.innerHTML = roverSVG(dir);
-  const svg = rv.querySelector('svg');
-  if (svg) { const deg = {north:0, east:90, south:180, west:270}[dir]; svg.style.transform = `rotate(${deg}deg)`; }
-  rv.style.display = 'block';
-}
-
-function telSensorProgress(front, legMm) {
-  if (!(telFrontR0 > 0 && telFrontR0 <= FRONT_MAX_UI && legMm > 0)) return null;
-  if (!(front > 0 && front <= FRONT_MAX_UI)) return null;
-  const progress = (telFrontR0 - front) / legMm;
-  if (!Number.isFinite(progress)) return null;
-  return Math.max(0, Math.min(1, progress));
-}
-
-function telTimeProgress(leg) {
-  const elapsed = performance.now() - telLegStartMs;
-  const duration = Math.max(700, leg.cells * TEL_MS_PER_CELL);
-  return Math.max(0, Math.min(0.98, elapsed / duration));
-}
-
-function telPlaceOnLeg(leg, progress) {
-  const p0 = getCellCenter(leg.start[0], leg.start[1]);
-  const p1 = getCellCenter(leg.end[0],   leg.end[1]);
-  telPlaceRoverPixel(
-    p0.x + (p1.x - p0.x) * progress,
-    p0.y + (p1.y - p0.y) * progress,
-    leg.heading
-  );
 }
 
 function animateTo(r, c, dir) {
@@ -752,6 +722,47 @@ function animateTo(r, c, dir) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function animateTelemetryLeg(stepIdx) {
+  if (!currentPath || currentPath.length < 2) return;
+  if (telPathRef !== currentPath) {
+    telLegs = telBuildLegs(currentPath);
+    telPathRef = currentPath;
+    telLastStep = -1;
+    telCurrentCell = null;
+    telCurrentDir = robotDirection;
+  }
+
+  const leg = telLegs && telLegs[stepIdx];
+  if (!leg || telAnimating) return;
+
+  telAnimating = true;
+  animCancel = false;
+
+  const staticRover = document.getElementById('static-start-rover');
+  if (staticRover) staticRover.style.display = 'none';
+
+  if (!telCurrentCell ||
+      telCurrentCell[0] !== leg.start[0] ||
+      telCurrentCell[1] !== leg.start[1]) {
+    placeRoverAt(leg.start[0], leg.start[1], leg.heading);
+    telCurrentCell = [leg.start[0], leg.start[1]];
+  }
+
+  telCurrentDir = leg.heading;
+  const badge = document.getElementById('step-badge');
+  badge.style.display = 'inline';
+
+  for (let i = leg.startIndex + 1; i <= leg.endIndex; i++) {
+    if (animCancel) break;
+    const [r, c] = currentPath[i].cell;
+    badge.textContent = `live ${stepIdx + 1}/${telLegs.length} • [${r},${c}]`;
+    await animateTo(r, c, leg.heading);
+    telCurrentCell = [r, c];
+  }
+
+  telAnimating = false;
+}
 
 async function animateRover(steps) {
   if (animRunning) { animCancel = true; await sleep(200); }
@@ -867,7 +878,7 @@ async function solve() {
 }
 
 
-function applyResponseData(data) {
+function applyResponseData(data, animatePreview = true) {
   // Restore grid state from response if config is present
   if (data.config) {
     if (data.config.rows)    document.getElementById('rows').value = data.config.rows;
@@ -949,7 +960,7 @@ function applyResponseData(data) {
 
   // Draw lines on canvas and trigger local screen rover simulation mechanics
   drawPath(steps);
-  animateRover(steps);
+  if (animatePreview) animateRover(steps);
 }
 
 
@@ -1220,7 +1231,7 @@ function loadGalleryMaze(data) {
     if (stateLabel === "DRIVING" || stateLabel === "RUNNING") {
       stateEl.className = "status-success";
       if (currentPath && currentPath.length > 1) {
-        animCancel = true;
+        if (!telAnimating) animCancel = true;
         const staticRover = document.getElementById('static-start-rover');
         if (staticRover) staticRover.style.display = 'none';
 
@@ -1229,30 +1240,19 @@ function loadGalleryMaze(data) {
           telLegs = telBuildLegs(currentPath);
           telPathRef = currentPath;
           telLastStep = -1;
-          telLastProgress = 0;
+          telCurrentCell = null;
+          telCurrentDir = robotDirection;
         }
         const leg = telLegs[stepIdx];
         if (leg) {
-          // Latch the front reading at the start of each new leg = browser-side R0
-          if (stepIdx !== telLastStep) {
-            telFrontR0 = front;
+          if (stepIdx !== telLastStep && !telAnimating) {
             telLastStep = stepIdx;
-            telLegStartMs = performance.now();
-            telLastProgress = 0;
+            animateTelemetryLeg(stepIdx);
           }
 
-          // Fraction along the leg: prefer sensor movement when useful, otherwise use a smooth time estimate.
-          const legMm = leg.cells * GRID_MM_UI;
-          const sensorF = telSensorProgress(front, legMm);
-          const timeF = telTimeProgress(leg);
-          let f = sensorF === null ? timeF : Math.max(sensorF, timeF * 0.35);
-          f = Math.max(telLastProgress, Math.min(1, f));
-          telLastProgress = f;
-
-          telPlaceOnLeg(leg, f);
           document.getElementById('step-badge').style.display = 'inline';
           document.getElementById('step-badge').textContent =
-            `live ${stepIdx + 1}/${telLegs.length} • ${Math.round(f * 100)}%`;
+            `live ${stepIdx + 1}/${telLegs.length} • ${leg.heading.toUpperCase()}`;
         }
       } else {
         document.getElementById('path-status').innerHTML =
@@ -1263,7 +1263,7 @@ function loadGalleryMaze(data) {
     } else {
       stateEl.className = "status-warn";
       telLastStep = -1;
-      telLastProgress = 0;
+      telAnimating = false;
     }
   };
 
@@ -1285,7 +1285,7 @@ function loadGalleryMaze(data) {
           stateEl.className = "status-danger";
         }
       }
-    }, 200);
+    }, 1000);
   }
 
   window.onload = () => {
