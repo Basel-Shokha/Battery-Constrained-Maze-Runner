@@ -653,6 +653,45 @@ function placeRoverAt(r, c, dir) {
   rv.style.display = 'block';
 }
 
+// ── LIVE TELEMETRY ROVER TRACKER ───────────────────────────────
+let telLegs = null, telPathRef = null, telLastStep = -1, telFrontR0 = 0;
+const GRID_MM_UI  = 300;    // must match the robot's grid cell size (mm)
+const FRONT_MAX_UI = 1300;  // VL53L1X Short-mode range ceiling (mm)
+
+function telHeadingOf(a, b) {
+  if (b[0] < a[0]) return 'north';
+  if (b[0] > a[0]) return 'south';
+  if (b[1] > a[1]) return 'east';
+  return 'west';
+}
+
+// Compress the per-cell path into legs, exactly like the server does,
+// so telLegs[stepIdx] lines up 1:1 with the rover's activeStepIndex.
+function telBuildLegs(path) {
+  const legs = []; let i = 0;
+  while (i < path.length - 1) {
+    const h = telHeadingOf(path[i].cell, path[i + 1].cell); let j = i;
+    while (j < path.length - 1 && telHeadingOf(path[j].cell, path[j + 1].cell) === h) j++;
+    legs.push({ start: path[i].cell, end: path[j].cell, heading: h, cells: j - i });
+    i = j;
+  }
+  return legs;
+}
+
+// Position #rover-anim at raw workspace pixels with a heading.
+function telPlaceRoverPixel(x, y, dir) {
+  const rv = document.getElementById('rover-anim');
+  const sz = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 64;
+  rv.style.width = sz + 'px';
+  rv.style.height = sz + 'px';
+  rv.style.left = x + 'px';
+  rv.style.top  = y + 'px';
+  if (!rv.querySelector('svg')) rv.innerHTML = roverSVG(dir);
+  const svg = rv.querySelector('svg');
+  if (svg) { const deg = {north:0, east:90, south:180, west:270}[dir]; svg.style.transform = `rotate(${deg}deg)`; }
+  rv.style.display = 'block';
+}
+
 function animateTo(r, c, dir) {
   return new Promise(resolve => {
     const rv = document.getElementById('rover-anim');
@@ -1153,11 +1192,26 @@ function loadGalleryMaze(data) {
 
     if (stateLabel === "DRIVING" || stateLabel === "RUNNING") {
       stateEl.className = "status-success";
-      if (currentPath && currentPath[stepIdx]) {
-        const currentCell = currentPath[stepIdx].cell;
-        document.querySelectorAll('.cell').forEach(c => c.style.filter = '');
-        const cellEl = document.getElementById(`cell-${currentCell[0]}-${currentCell[1]}`);
-        if (cellEl) cellEl.style.filter = "drop-shadow(0 0 8px #3b82f6) brightness(1.2)";
+      if (currentPath && currentPath.length > 1) {
+        // Rebuild legs whenever the path changes (indexed like the rover's stepIdx)
+        if (telPathRef !== currentPath) { telLegs = telBuildLegs(currentPath); telPathRef = currentPath; telLastStep = -1; }
+        const leg = telLegs[stepIdx];
+        if (leg) {
+          // Latch the front reading at the start of each new leg = browser-side R0
+          if (stepIdx !== telLastStep) { telFrontR0 = front; telLastStep = stepIdx; }
+
+          // Fraction along the leg, from how far the front wall has closed in
+          const legMm = leg.cells * GRID_MM_UI;
+          let f = 0;
+          if (telFrontR0 > 0 && telFrontR0 <= FRONT_MAX_UI && legMm > 0) {
+            f = (telFrontR0 - front) / legMm;
+            if (f < 0) f = 0; else if (f > 1) f = 1;
+          }
+
+          const p0 = getCellCenter(leg.start[0], leg.start[1]);
+          const p1 = getCellCenter(leg.end[0],   leg.end[1]);
+          telPlaceRoverPixel(p0.x + (p1.x - p0.x) * f, p0.y + (p1.y - p0.y) * f, leg.heading);
+        }
       }
     } else if (stateLabel === "PIVOT_TURNING") {
       stateEl.className = "status-warn";
