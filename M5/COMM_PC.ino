@@ -20,7 +20,7 @@ extern void sendPeripheralCmd(int commandId, int param1, int param2);
 
 const char* WIFI_SSID   = "A";
 const char* WIFI_PASS   = "00000000";
-const char* SERVER_IP   = "192.168.137.212";
+const char* SERVER_IP   = "192.168.137.1";
 const char* SERVER_PORT = "8085";
 
 unsigned long lastPcStreamTime       = 0;

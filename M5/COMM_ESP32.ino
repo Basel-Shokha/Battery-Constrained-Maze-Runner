@@ -55,3 +55,4 @@ void receivePeripheralTelemetry() {
 void sendPeripheralCmd(int commandId, int param1, int param2) {
     ESP32Serial.printf("PACKET:%d,%d,%d\n", commandId, param1, param2);
 }
+

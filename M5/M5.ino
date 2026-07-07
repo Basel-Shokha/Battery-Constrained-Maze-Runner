@@ -7,7 +7,6 @@
 #include <WiFi.h> 
 
 HardwareSerial ESP32Serial(2);
-
 const int CMD_PLAY_AUDIO     = 1;
 const int CMD_STOP_AUDIO     = 2;
 const int CMD_START_CHARGE   = 3;
@@ -18,7 +17,6 @@ const int AUDIO_GOING_STATION = 102;
 const int AUDIO_CHARGING_TUNE = 103;
 const int AUDIO_ROUTE_ERROR   = 104;
 const int AUDIO_VICTORY       = 105;
-
 enum Direction : uint8_t { NORTH = 0, EAST = 1, SOUTH = 2, WEST = 3 };
 struct MovementStep {
     Direction orientation;
@@ -27,14 +25,12 @@ struct MovementStep {
     uint8_t stopLimitGrids;
     uint8_t action; 
 };
-
 Direction initialSpawnDirection = EAST;
 Direction currentRobotDirection = EAST; 
 MovementStep missionPipeline[50];
 uint8_t totalMissionSteps       = 0;
 int8_t activeStepIndex          = -1;
-int state                       = 0; 
-
+int state                       = 0;
 enum DrivePhase { WALKING_FWD, CHARGE_HANDSHAKE, CHARGING_EXEC, POST_CHARGE_CHIRP, TURNING, VERIFYING_TURN };
 DrivePhase currentPhase = WALKING_FWD;
 
@@ -42,24 +38,28 @@ bool chargeStartAckReceived = false;
 bool esp32ChargeFinished     = false;
 unsigned long handshakeResendTime = 0;
 unsigned long postChargeTimer      = 0;
-
 // ── TUNABLE CONFIGURATION PARAMETERS (EDIT HERE) ──
-unsigned long FIRST_GRID_BLIND_TIME = 1500; // Updated: Time (ms) for 1st grid acceleration profile
-unsigned long REST_GRID_BLIND_TIME  = 1500; // Updated: Time (ms) added for each extra grid square
-int8_t BASE_TURN_SPEED              = 14;   // Tunable: Raised from 10 to clear stiction stalls!
+///#GEMINI
+unsigned long FIRST_GRID_BLIND_TIME = 1500;
+// Updated: Time (ms) for 1st grid acceleration profile
+///#GEMINI
+unsigned long REST_GRID_BLIND_TIME  = 1500;
+// Updated: Time (ms) added for each extra grid square
+///#GEMINI
+int8_t BASE_TURN_SPEED              = 16;
+// Tunable: Raised to clear stiction stalls!
 
 // ── BLIND SPOT TIMERS & STRAFING FLAGS ──────────────────
 int8_t lastStepIndex          = -1;
 unsigned long stepStartTime   = 0;
 bool isStrafingLeft           = false;
 bool isStrafingRight          = false;
-
 volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
 unsigned long settleTimer    = 0;
-
-int16_t baselineSpeed        = 25; // Main corridor driving speed fixed at 25
+int16_t baselineSpeed        = 25;
+// Main corridor driving speed fixed at 25
 
 unsigned long lastStuckCheckTime = 0;
 float lastStuckCheckYaw          = 0.0f;
@@ -101,7 +101,7 @@ void resetRunState() {
     stopMotors();               
     state = 0;                  
     activeStepIndex = -1;       
-    totalMissionSteps = 0;      
+    totalMissionSteps = 0;
     lastStepIndex = -1;         
     
     currentPhase = WALKING_FWD; 
@@ -109,14 +109,15 @@ void resetRunState() {
     isStrafingRight = false;
     antiStuckSpeedBoost = 0;
 
-    resetSpeedHistory();        
+    resetSpeedHistory();
     Serial.println("[RESET INTERRUPT] Local run state fully purged. Return to IDLE.");
 }
 
 void setup() {
   M5.begin(); Serial.begin(115200); Wire.begin(0, 26); 
   initPeripheralUART(); 
-  M5.IMU.Init(); M5.IMU.SetGyroFsr(MPU6886::GFS_250DPS);
+  M5.IMU.Init();
+  M5.IMU.SetGyroFsr(MPU6886::GFS_250DPS);
   M5.Lcd.setRotation(3); M5.Lcd.fillScreen(BLACK); M5.Lcd.setTextSize(2);
   connectWiFi(); 
   M5.Lcd.fillScreen(BLACK); M5.Lcd.setTextColor(YELLOW);
@@ -127,10 +128,10 @@ void setup() {
 }
 
 void loop() {
-  M5.update(); // Poll side button presses natively
+  M5.update();
+  // Poll side button presses natively
   updateYaw(); 
   unsigned long now = millis();
-
   // ── INSTANT INTERRUPT RESET ──
   if (M5.BtnB.wasPressed() || (Serial.available() > 0 && Serial.read() == 'r')) {
       resetRunState();
@@ -147,18 +148,24 @@ void loop() {
   if (state == 1) {
     // ── GLOBAL SIDE-WALL GUARD ──
     if (!isStrafingLeft && !isStrafingRight) {
-        if (s_left > 0 && s_left <= 50) { isStrafingRight = true; } 
-        else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true; }
+        if (s_left > 0 && s_left <= 50) { isStrafingRight = true;
+        } 
+        else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true;
+        }
     }
 
     if (isStrafingRight) {
-        if (s_left >= 90) { isStrafingRight = false; } 
-        else { setMotors(baselineSpeed, -baselineSpeed, -baselineSpeed, baselineSpeed); goto renderDisplayLink; }
+        if (s_left >= 90) { isStrafingRight = false;
+        } 
+        else { setMotors(baselineSpeed, -baselineSpeed, -baselineSpeed, baselineSpeed); goto renderDisplayLink;
+        }
     }
 
     if (isStrafingLeft) {
-        if (s_right >= 90) { isStrafingLeft = false; } 
-        else { setMotors(-baselineSpeed, baselineSpeed, baselineSpeed, -baselineSpeed); goto renderDisplayLink; }
+        if (s_right >= 90) { isStrafingLeft = false;
+        } 
+        else { setMotors(-baselineSpeed, baselineSpeed, baselineSpeed, -baselineSpeed); goto renderDisplayLink;
+        }
     }
 
     switch (currentPhase) {
@@ -183,7 +190,6 @@ void loop() {
               blindSpotDuration = FIRST_GRID_BLIND_TIME + (currentLeg.gridsToCross - 1) * REST_GRID_BLIND_TIME;
           }
           bool isBlindSpotActive = (now - stepStartTime < blindSpotDuration);
-
           if (!isBlindSpotActive && s_front > 0 && s_front <= stopThresholdMm) {
             stopMotors();
             if (currentLeg.action == 1) {
@@ -194,7 +200,7 @@ void loop() {
               goto targetTurnCalculation;
             }
           } else {
-            walkForward(); 
+            walkForward();
           }
         }
         break;
@@ -236,29 +242,31 @@ void loop() {
       targetTurnCalculation:
       case TURNING: {
         if (activeStepIndex >= totalMissionSteps) {
-          state = 0; stopMotors();
+          state = 0;
+          stopMotors();
           sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_VICTORY, 0);
           break;
         }
 
         MovementStep nextLeg = missionPipeline[activeStepIndex];
-
         if (currentPhase != TURNING) {
             if (activeStepIndex == 0) currentRobotDirection = initialSpawnDirection;
             Direction nextDir = nextLeg.orientation;
             
             if (currentRobotDirection == nextDir) {
-                targetHeading = yaw; resetSpeedHistory(); lastSampleTime = millis();
+                targetHeading = yaw;
+                resetSpeedHistory(); lastSampleTime = millis();
                 currentPhase = WALKING_FWD; break;
             }
 
             float relativeAngleDelta = 0.0f;
-            if ((currentRobotDirection + 1) % 4 == nextDir)      relativeAngleDelta = 90.0f;  
-            else if ((currentRobotDirection + 2) % 4 == nextDir) relativeAngleDelta = 180.0f; 
+            if ((currentRobotDirection + 1) % 4 == nextDir)      relativeAngleDelta = 90.0f;
+            else if ((currentRobotDirection + 2) % 4 == nextDir) relativeAngleDelta = 180.0f;
             else if ((currentRobotDirection + 3) % 4 == nextDir) relativeAngleDelta = -90.0f; 
 
             turnTargetYaw = wrap360(yaw + relativeAngleDelta);
-            lastStuckCheckTime = now; lastStuckCheckYaw = yaw; antiStuckSpeedBoost = 0;
+            lastStuckCheckTime = now;
+            lastStuckCheckYaw = yaw; antiStuckSpeedBoost = 0;
             currentPhase = TURNING;
         }
 
@@ -295,21 +303,24 @@ void loop() {
           targetHeading = turnTargetYaw;
           currentRobotDirection = missionPipeline[activeStepIndex].orientation;
           resetSpeedHistory(); lastSampleTime = millis();
-          currentPhase = WALKING_FWD; 
+          currentPhase = WALKING_FWD;
         } else {
-          lastStuckCheckTime = now; lastStuckCheckYaw = yaw; currentPhase = TURNING;
+          lastStuckCheckTime = now; lastStuckCheckYaw = yaw;
+          currentPhase = TURNING;
         }
         break;
       }
     }
-  } else { stopMotors(); }
+  } else { stopMotors();
+  }
 
   renderDisplayLink:
   if (now - lastDrawTime > 100) {
     lastDrawTime = now; M5.Lcd.setCursor(0, 0);
     if (state == 0) {
       M5.Lcd.setTextColor(CYAN, BLACK);   M5.Lcd.println("--- WIFI ACTIVE ---");
-      M5.Lcd.setTextColor(WHITE, BLACK);   M5.Lcd.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+      M5.Lcd.setTextColor(WHITE, BLACK);
+      M5.Lcd.printf("IP: %s\n", WiFi.localIP().toString().c_str());
       M5.Lcd.printf("Steps Loaded: %d\n\n", totalMissionSteps);
       M5.Lcd.setTextColor(YELLOW, BLACK); M5.Lcd.println("Awaiting Dispatch...");
     } else {
@@ -319,4 +330,3 @@ void loop() {
   }
   delay(2);
 }
-

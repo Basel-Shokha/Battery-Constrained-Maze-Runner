@@ -3,7 +3,7 @@
 #include <math.h>
 
 // Link directly to the main loop's external speed register variable
-extern int16_t baselineSpeed; 
+extern int16_t baselineSpeed;
 
 // ── GYRO & ORIENTATION GLOBALS ────────────────────────────
 float gyroX, gyroY, gyroZ;
@@ -116,5 +116,29 @@ void processParallelAlignment(unsigned long now, unsigned long &lastSampleTime) 
     lastDistR = s_right;
     lastDistL = s_left;
     lastSampleTime = now;
-}
 
+    ///#GEMINI
+    // ══════════════════════════════════════════════════════════
+    //  SENSOR-STEERING INTERCEPT ENGINE (THE ARGENTINA LOGIC)
+    // ══════════════════════════════════════════════════════════
+    bool followLeft = (s_left < s_right);
+    isAligning = false;
+
+    if (followLeft) {
+        if (vLeft > 20.0f) {        // Approaching left wall too aggressively
+            targetHeading = wrap360(targetHeading + 1.0f); // Micro-steer Right
+            isAligning = true;
+        } else if (vLeft < -20.0f) { // Drifting away from left wall
+            targetHeading = wrap360(targetHeading - 1.0f); // Micro-steer Left
+            isAligning = true;
+        }
+    } else {
+        if (vRight > 20.0f) {       // Approaching right wall too aggressively
+            targetHeading = wrap360(targetHeading - 1.0f); // Micro-steer Left
+            isAligning = true;
+        } else if (vRight < -20.0f) { // Drifting away from right wall
+            targetHeading = wrap360(targetHeading + 1.0f); // Micro-steer Right
+            isAligning = true;
+        }
+    }
+}
