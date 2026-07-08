@@ -93,6 +93,13 @@ button:hover{filter:brightness(0.9);}
 #m5-calibrate-side:hover rect{fill:#f97316;filter:drop-shadow(0 0 5px #facc15);}
 #m5-calibrate-side.calibrating rect{fill:#facc15;filter:drop-shadow(0 0 8px #facc15);transform:translateX(-2px);}
 
+/* ── Manual Route ─────────────────────────────────────────── */
+.btn-route{background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;border:none;padding:6px 14px;font-size:12px;}
+.btn-route:hover{filter:brightness(1.1);}
+.btn-route:disabled{opacity:0.5;cursor:not-allowed;}
+.mode-btn#mode-route.active{background:#8b5cf6;color:#fff;border-color:#8b5cf6;}
+.route-marker{position:absolute;top:2px;left:2px;min-width:15px;height:15px;padding:0 3px;background:#8b5cf6;color:#fff;font-size:9px;font-weight:bold;border-radius:8px;display:flex;align-items:center;justify-content:center;z-index:7;pointer-events:none;box-shadow:0 0 4px rgba(0,0,0,.45);}
+
 /* ── Maze Gallery Modal ───────────────────────────────────── */
 #gallery-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:500;display:none;align-items:center;justify-content:center;}
 #gallery-overlay.open{display:flex;}
@@ -140,6 +147,7 @@ button:hover{filter:brightness(0.9);}
     <button class="mode-btn" id="mode-start" onclick="setMode('start')">Start</button>
     <button class="mode-btn" id="mode-end" onclick="setMode('end')">End</button>
     <button class="mode-btn" id="mode-charge" onclick="setMode('charge')">Station</button>
+    <button class="mode-btn" id="mode-route" onclick="setMode('route')">Route</button>
     <div class="vdiv"></div>
 
     <!-- Robot Direction Compass -->
@@ -164,7 +172,16 @@ button:hover{filter:brightness(0.9);}
     <!-- Inside the topbar div, right next to the SOLVE button -->
 
     <button class="btn-solve" id="send-btn" onclick="sendMazeToM5()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">SEND TO M5 ⬆</button>
+    <button class="btn-solve" id="send-route-btn" onclick="sendRouteToM5()" style="background: linear-gradient(135deg, #8b5cf6, #6d28d9);">SEND ROUTE ⬆</button>
     <button class="btn-solve" id="reset-btn" onclick="resetM5Run()" style="background: linear-gradient(135deg, #ef4444, #991b1b);">RESET RUN</button>
+
+    <!-- Manual route controls -->
+    <div class="vdiv"></div>
+    <div class="group" id="route-controls">
+      <button class="btn-route" id="run-route-btn" onclick="runManualRoute()">RUN ROUTE ▶</button>
+      <button id="route-undo-btn" onclick="undoRouteStep()" title="Remove last route cell">↶ Undo</button>
+      <button id="route-clear-btn" onclick="clearManualRoute()" title="Clear the manual route">✕ Route</button>
+    </div>
 
     <div id="telemetry-panel" style="position:fixed;right:8px;bottom:20px;width:150px;height:300px;z-index:100;">
       <div style="position:relative;width:150px;height:300px;filter:drop-shadow(0 6px 16px rgba(0,0,0,.45));">
@@ -252,6 +269,7 @@ let robotDirection = 'north';
 let startCell = null, endCell = null;
 let chargeCells = new Set();
 let currentPath = null;
+let manualRoute = [];   // ordered list of [r,c] cells for the manual route feature
 let animRunning = false;
 let animCancel = false;
 let runMode = 'mission';
@@ -364,6 +382,43 @@ async function sendMazeToM5() {
 
   btn.disabled = false; btn.textContent = 'SEND TO M5 ⬆';
 }
+
+// Send the manually-defined route to the M5. The robot should follow this
+// exact ordered sequence of cells — no solving, no battery.
+async function sendRouteToM5() {
+  if (manualRoute.length < 2) {
+    alert('Build a manual route first: switch to Route mode, click cells in visiting order, then send.');
+    return;
+  }
+  const btn = document.getElementById('send-route-btn');
+  btn.disabled = true; btn.textContent = 'SENDING…';
+
+  // Start from the normal maze payload (grid, walls, active cells)…
+  const req = buildRequestJSON();
+
+  // …then attach the manual route. These are the fields the M5 server must read:
+  req.manual_route     = manualRoute.map(c => [c[0], c[1]]); // ordered [row,col] list
+  req.use_manual_route = true;                                // flag: follow the route as-is
+  req.start            = manualRoute[0];                      // first cell in the route
+  req.end              = manualRoute[manualRoute.length - 1]; // last cell in the route
+  req.config.battery_capacity = 2147483647;                   // route mode = no battery limit
+
+  try {
+    const res = await fetch('http://localhost:8085/send_maze', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(req)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    document.getElementById('path-status').innerHTML =
+      `<span class="status-success">✔ Manual route (${manualRoute.length} cells) sent to M5 — press the M5 button to run it.</span>`;
+  } catch (err) {
+    document.getElementById('path-status').innerHTML =
+      `<span class="status-danger">⚠ Route transmission failed: ${err.message}</span>`;
+  }
+
+  btn.disabled = false; btn.textContent = 'SEND ROUTE ⬆';
+}
 function setRunMode(mode) {
   runMode = mode;
   const btnMission = document.getElementById('run-mission');
@@ -450,6 +505,12 @@ function setMode(m) {
   currentMode = m;
   document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`mode-${m}`).classList.add('active');
+  if (m === 'route') {
+    document.getElementById('path-route').textContent =
+      manualRoute.length
+        ? `Manual route (${manualRoute.length}) — click more cells or RUN ROUTE ▶.`
+        : 'Route mode: click cells in the order the rover should visit them (1st, 2nd, 3rd…).';
+  }
 }
 
 
@@ -506,6 +567,10 @@ function cellClick(r, c) {
     if (!cell.classList.contains('active')) cell.classList.add('active');
     chargeCells.has(k) ? chargeCells.delete(k) : chargeCells.add(k);
     refreshIcons();
+  } else if (currentMode === 'route') {
+    if (!cell.classList.contains('active')) cell.classList.add('active');
+    manualRoute.push([r, c]);
+    updateRoutePreview();
   }
 }
 
@@ -524,6 +589,7 @@ function generateGrid(defaultState = true) {
   gridRows = parseInt(document.getElementById('rows').value);
   gridCols = parseInt(document.getElementById('cols').value);
   if (defaultState) { startCell = null; endCell = null; chargeCells.clear(); currentPath = null; animCancel = true; }
+  manualRoute = [];   // grid cells are rebuilt, so old route coordinates no longer apply
   calculateScaling();
 
   const container = document.getElementById('maze-container');
@@ -801,6 +867,136 @@ async function solve() {
 }
 
 
+/* ── Manual Route feature ──────────────────────────────────────────
+   Build an ordered list of cells by clicking them in Route mode, then
+   drive the rover through that exact sequence — continuously, ignoring
+   battery and charging stations entirely. */
+
+function buildRouteSteps() {
+  return manualRoute.map((cell, i) => ({
+    step: i + 1,
+    cell: cell,
+    type: i === 0 ? 'start'
+        : i === manualRoute.length - 1 ? 'destination'
+        : 'move'
+  }));
+}
+
+// Numbered badges in the corner of each route cell (survive refreshIcons).
+function renderRouteMarkers() {
+  document.querySelectorAll('.route-marker').forEach(e => e.remove());
+  const perCell = {};
+  manualRoute.forEach((cell, i) => {
+    const k = `${cell[0]},${cell[1]}`;
+    (perCell[k] = perCell[k] || []).push(i + 1);
+  });
+  Object.keys(perCell).forEach(k => {
+    const [r, c] = k.split(',');
+    const cell = document.getElementById(`cell-${r}-${c}`);
+    if (!cell) return;
+    const b = document.createElement('div');
+    b.className = 'route-marker';
+    b.textContent = perCell[k].join(',');
+    cell.appendChild(b);
+  });
+}
+
+// Draw the connecting arrows for the route preview (numbers come from the badges).
+function drawRouteLines(cells) {
+  const ws = document.getElementById('workspace');
+  const cv = document.getElementById('path-canvas');
+  cv.width = ws.offsetWidth; cv.height = ws.offsetHeight;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!cells || cells.length < 2) return;
+
+  const color = '#8b5cf6';
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+
+  for (let i = 0; i < cells.length - 1; i++) {
+    const p1 = getCellCenter(cells[i][0],   cells[i][1]);
+    const p2 = getCellCenter(cells[i+1][0], cells[i+1][1]);
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+
+    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2, sz = 10;
+    ctx.beginPath();
+    ctx.moveTo(mx + sz*Math.cos(angle), my + sz*Math.sin(angle));
+    ctx.lineTo(mx - sz*Math.cos(angle-Math.PI/6), my - sz*Math.sin(angle-Math.PI/6));
+    ctx.lineTo(mx - sz*Math.cos(angle+Math.PI/6), my - sz*Math.sin(angle+Math.PI/6));
+    ctx.closePath(); ctx.fill();
+  }
+}
+
+function updateRoutePreview() {
+  drawRouteLines(manualRoute);
+  renderRouteMarkers();
+  const n = manualRoute.length;
+  currentPath = n >= 2 ? buildRouteSteps() : null;
+
+  const routeStr = manualRoute.map((c, i) => `${i+1}:[${c[0]},${c[1]}]`).join(' → ');
+  document.getElementById('path-route').innerHTML =
+    n ? `Manual route (${n}): ${routeStr}`
+      : 'Route mode: click cells in the order the rover should visit them.';
+  document.getElementById('path-status').innerHTML =
+    n >= 2 ? '<span class="status-success">Route ready — click RUN ROUTE ▶ (continuous, no battery).</span>'
+    : n === 1 ? '<span class="status-warn">Add at least one more cell to build the route.</span>'
+    : '';
+}
+
+function undoRouteStep() {
+  if (!manualRoute.length) return;
+  manualRoute.pop();
+  updateRoutePreview();
+}
+
+function clearManualRoute() {
+  manualRoute = [];
+  currentPath = null;
+  document.querySelectorAll('.route-marker').forEach(e => e.remove());
+  clearCanvas();
+  hideRover();
+  refreshIcons();
+  document.getElementById('path-route').textContent = 'Manual route cleared.';
+  document.getElementById('path-status').innerHTML = '';
+}
+
+async function runManualRoute() {
+  if (manualRoute.length < 2) {
+    alert('Add at least two cells in Route mode first (click them in visiting order).');
+    return;
+  }
+  animCancel = true;
+  await sleep(120);
+
+  // Face the rover toward the first move so the turn looks right.
+  const [r0, c0] = manualRoute[0];
+  const [r1, c1] = manualRoute[1];
+  const dr = r1 - r0, dc = c1 - c0;
+  if      (Math.abs(dr) >= Math.abs(dc) && dr < 0) robotDirection = 'north';
+  else if (Math.abs(dr) >= Math.abs(dc) && dr > 0) robotDirection = 'south';
+  else if (dc > 0) robotDirection = 'east';
+  else if (dc < 0) robotDirection = 'west';
+  setDir(robotDirection);
+
+  const steps = buildRouteSteps();
+  currentPath = steps;
+
+  const routeStr = steps.map(s =>
+    s.type === 'destination' ? `[${s.cell[0]},${s.cell[1]}]` : `(${s.cell[0]},${s.cell[1]})`
+  ).join(' → ');
+  document.getElementById('path-route').innerHTML = `Manual route: ${routeStr}`;
+  document.getElementById('path-status').innerHTML =
+    '<span class="status-success">▶ Running manual route — continuous, no battery.</span>';
+
+  drawPath(steps);       // numbered dots + arrows for the run
+  renderRouteMarkers();  // keep the ordering badges visible too
+  animateRover(steps);
+}
+
+
 function applyResponseData(data) {
   // Restore grid state from response if config is present
   if (data.config) {
@@ -956,6 +1152,9 @@ function resetToEdit() {
 
   // Bring back the static icons (including the start rover)
   refreshIcons();
+
+  // If a manual route was defined, re-show it so it can be re-run.
+  if (manualRoute.length) updateRoutePreview();
 }
 
 const mazeLibrary = [
@@ -982,6 +1181,9 @@ const mazeLibrary = [
 
   { name:"Maze 10 — 2×5 Insufficient Charge", data:{"config":{"rows":2,"columns":5,"battery_capacity":2},"start":[0,0],"end":[0,4],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4]],"charging_stations":[[1,4],[1,0],[0,3],[1,3]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[1,4],[1,5]]},{"between":[[1,0],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[1,4],[2,4]]}]} },
 
+  { name:"Maze 11 — 5×5 Full Grid", data:{"config":{"rows":5,"columns":5,"battery_capacity":2},"start":[0,0],"end":[4,4],"robot_direction":"north","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4],[3,0],[3,1],[3,2],[3,3],[3,4],[4,0],[4,1],[4,2],[4,3],[4,4]],"charging_stations":[[3,3],[1,1],[3,1],[4,2],[0,2]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[1,2],[2,2]]},{"between":[[2,4],[2,5]]},{"between":[[3,-1],[3,0]]},{"between":[[3,1],[3,2]]},{"between":[[3,4],[3,5]]},{"between":[[4,-1],[4,0]]},{"between":[[4,2],[4,3]]},{"between":[[4,4],[4,5]]},{"between":[[4,0],[5,0]]},{"between":[[4,1],[5,1]]},{"between":[[4,2],[5,2]]},{"between":[[4,3],[5,3]]},{"between":[[4,4],[5,4]]}]} },
+
+  { name:"Maze 12 — 5×5 Open Grid", data:{"config":{"rows":5,"columns":5,"battery_capacity":10},"start":null,"end":null,"robot_direction":"north","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4],[3,0],[3,1],[3,2],[3,3],[3,4],[4,0],[4,1],[4,2],[4,3],[4,4]],"charging_stations":[],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[2,4],[2,5]]},{"between":[[3,-1],[3,0]]},{"between":[[3,4],[3,5]]},{"between":[[4,-1],[4,0]]},{"between":[[4,4],[4,5]]},{"between":[[4,0],[5,0]]},{"between":[[4,1],[5,1]]},{"between":[[4,2],[5,2]]},{"between":[[4,3],[5,3]]},{"between":[[4,4],[5,4]]}]} },
 ];
 
 function mazeThumbnail(data) {

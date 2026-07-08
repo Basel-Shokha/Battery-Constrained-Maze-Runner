@@ -117,14 +117,31 @@ int main() {
             else if (spawnDirStr == "south") initialSpawnDirectionInt = 2;
             else if (spawnDirStr == "west")  initialSpawnDirectionInt = 3;
 
-            MazeSolver solver(request); json solution; solver.dumpSolution(solution);
+            json path = json::array();
 
-            if (solution["feasible"].get<bool>() == false) {
-                res.set_content("{\"status\":\"stored\",\"feasible\":false}", "application/json");
-                return;
-            }
+                        // ── MANUAL ROUTE: follow the exact cells from the web UI, no solving ──
+                        if (request.contains("use_manual_route") && request["use_manual_route"].get<bool>()
+                            && request.contains("manual_route") && request["manual_route"].size() >= 2) {
 
-            json path = solution["path"];
+                            json route = request["manual_route"];
+                            for (int k = 0; k < route.size(); k++) {
+                                json leg;
+                                leg["cell"] = { route[k][0].get<int>(), route[k][1].get<int>() };
+                                if      (k == 0)                leg["type"] = "start";
+                                else if (k == route.size() - 1) leg["type"] = "destination";
+                                else                            leg["type"] = "move";
+                                path.push_back(leg);
+                            }
+                        } else {
+                            // ── NORMAL: solve the maze as before ──
+                            MazeSolver solver(request); json solution; solver.dumpSolution(solution);
+
+                            if (solution["feasible"].get<bool>() == false) {
+                                res.set_content("{\"status\":\"stored\",\"feasible\":false}", "application/json");
+                                return;
+                            }
+                            path = solution["path"];
+                        }
             int totalNodes = path.size();
             int rows = request["config"]["rows"].get<int>();
             int cols = request["config"]["columns"].get<int>();
