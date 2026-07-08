@@ -16,6 +16,11 @@ bool isAwaitingChargeDoneAck        = false;
 
 String inputBuffer = "";
 
+///#GEMINI: INTERCEPT OVERWRITE PARAMETER REGISTER ENTRIES
+bool continuousWhiteMode       = false;
+bool batteryIndicatorActive    = false;
+int currentGreenLedsCount      = 0;
+
 extern void initLED();
 extern void clearRing();
 extern void setRingColor(uint8_t r, uint8_t g, uint8_t b);
@@ -28,7 +33,6 @@ extern bool resetMP3();
 
 extern void initSensors();
 extern void readSensors();
-// Linked directly to your untouched function in RECHARGING_LOGIC.ino
 extern void runRechargingMode();
 
 void parsePacket(String inLine);
@@ -48,13 +52,23 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
-// ── RULE 2: COMPLETION HANDSHAKE RESEND TRACKER ──
     if (isAwaitingChargeDoneAck) {
         if (now - notifyResendTime >= 100) { 
             notifyResendTime = now;
             M5Serial.println("NOTIFY:CHARGE_DONE");
         }
     } 
+    ///#GEMINI: Guard white mode configurations against breathing overwrites
+    else if (continuousWhiteMode) {
+        setRingColor(150, 150, 150);
+    }
+    ///#GEMINI: Guard battery indicator rings against breathing overwrites
+    else if (batteryIndicatorActive) {
+        clearRing();
+        for (int i = 0; i < currentGreenLedsCount; i++) {
+            setSinglePixel(i, 0, 150, 0);
+        }
+    }
     else {
         updateOrangeBreathing(now);
     }
@@ -69,7 +83,6 @@ void loop() {
         char c = M5Serial.read();
         if (c == '\n') {
             inputBuffer.trim();
-// Check for completion confirmation from M5
             if (inputBuffer == "ACK:CHARGE_DONE") {
                 isAwaitingChargeDoneAck = false;
                 lastOrangeUpdateTime = millis(); 
@@ -96,7 +109,6 @@ void updateOrangeBreathing(unsigned long now) {
 
 void parsePacket(String inLine) {
     if (!inLine.startsWith("PACKET:")) return;
-    
     int cmdId = 0, p1 = 0, p2 = 0;
     if (sscanf(inLine.c_str(), "PACKET:%d,%d,%d", &cmdId, &p1, &p2) != 3) return;
     
@@ -111,22 +123,33 @@ void parsePacket(String inLine) {
     else if (cmdId == CMD_STOP_AUDIO) {
         resetMP3();
     }
-    // ── RULE 2: RECHARGING INTERCEPT PROMPTS ACK:3 BEFORE TRIGGERING YOUR FUNCTION ──
     else if (cmdId == CMD_START_CHARGE) {
         M5Serial.println("ACK:3");
-        // Triggers your untouched function directly
         runRechargingMode();
-        // Arm completion handshake once your function returns
         isAwaitingChargeDoneAck = true;
         notifyResendTime = 0;
     }
-    // ── RULE 3: RENDER BATTERY ON LEDS FROM PACKET FEED ──
+    ///#GEMINI: Mode specific ring formatting parser block
     else if (cmdId == CMD_BATTERY_UPDATE) {
-        int greenLeds = (p1 * TOTAL_NUM_PIXELS) / p2;
-        greenLeds = constrain(greenLeds, 0, TOTAL_NUM_PIXELS);
-        clearRing();
-        for (int i = 0; i < greenLeds; i++) {
-            setSinglePixel(i, 0, 150, 0);
+        if (p1 == 255 && p2 == 255) {
+            continuousWhiteMode    = true;
+            batteryIndicatorActive = false;
+            setRingColor(150, 150, 150); // Set ring solid white
+        } 
+        else if (p1 == 0 && p2 == 0) {
+            continuousWhiteMode    = false;
+            batteryIndicatorActive = false;
+            lastOrangeUpdateTime   = millis(); // Release overrides back to breathing
+        }
+        else if (p2 > 0) {
+            continuousWhiteMode    = false;
+            batteryIndicatorActive = true;
+            currentGreenLedsCount  = (p1 * TOTAL_NUM_PIXELS) / p2;
+            currentGreenLedsCount  = constrain(currentGreenLedsCount, 0, TOTAL_NUM_PIXELS);
+            clearRing();
+            for (int i = 0; i < currentGreenLedsCount; i++) {
+                setSinglePixel(i, 0, 150, 0);
+            }
         }
     }
 }
