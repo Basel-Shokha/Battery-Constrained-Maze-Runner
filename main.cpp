@@ -11,7 +11,7 @@
 
 using nlohmann::json;
 
-std::string rawM5InstructionString = "START:1,0\n";
+std::string rawM5InstructionString = "START:1,0,0,8\n";
 std::string latestMazeJson = "{}";
 json globalTelemetryCache = {{"stepIdx",0},{"yaw",0.0},{"left",0},{"front",0},{"right",0},{"state","IDLE"}};
 bool newMissionAvailable = false;
@@ -21,12 +21,9 @@ bool resetRequested = false;
 void printM5Packet(const std::string& packet) {
     std::cout << "\n========== PACKET SENT TO M5 ==========\n"
               << packet;
-
-    // Keep the closing separator on its own line.
     if (packet.empty() || packet.back() != '\n') {
         std::cout << '\n';
     }
-
     std::cout << "=======================================\n" << std::flush;
 }
 
@@ -34,17 +31,13 @@ void removeStartJourneyCommands() {
     std::stringstream input(rawM5InstructionString);
     std::stringstream output;
     std::string line;
-
     while (std::getline(input, line)) {
-        if (line != "CMD:START_JOURNEY") {
+        if (line != "CMD:START_JOURNEY" && line != "CMD:ROUTE_ERROR") {
             output << line << "\n";
         }
     }
-
     rawM5InstructionString = output.str();
 }
-
-
 
 std::string getHeadingLabel(int dir) {
     if (dir == 0) return "NORTH";
@@ -57,7 +50,6 @@ std::string getHeadingLabel(int dir) {
 int countOpenGrids(int startR, int startC, int direction, int maxRows, int maxCols, const json& wallsJson) {
     int openGrids = 0;
     int currR = startR; int currC = startC;
-
     auto hasWall = [&](int r1, int c1, int r2, int c2) {
         for (const auto& w : wallsJson) {
             if (!w.contains("between") || w["between"].size() < 2) continue;
@@ -65,7 +57,6 @@ int countOpenGrids(int startR, int startC, int direction, int maxRows, int maxCo
             int cell1C = w["between"][0][1].get<int>();
             int cell2R = w["between"][1][0].get<int>();
             int cell2C = w["between"][1][1].get<int>();
-
             if (((cell1R == r1 && cell1C == c1) && (cell2R == r2 && cell2C == c2)) ||
                 ((cell1R == r2 && cell1C == c2) && (cell2R == r1 && cell2C == c1))) {
                 return true;
@@ -73,17 +64,14 @@ int countOpenGrids(int startR, int startC, int direction, int maxRows, int maxCo
         }
         return false;
     };
-
     while (true) {
         int nextR = currR; int nextC = currC;
         if      (direction == 0) nextR--;
         else if (direction == 1) nextC++;
         else if (direction == 2) nextR++;
         else if (direction == 3) nextC--;
-
         if (nextR < 0 || nextR >= maxRows || nextC < 0 || nextC >= maxCols) break;
         if (hasWall(currR, currC, nextR, nextC)) break;
-
         openGrids++;
         currR = nextR; currC = nextC;
     }
@@ -92,7 +80,6 @@ int countOpenGrids(int startR, int startC, int direction, int maxRows, int maxCo
 
 int main() {
     httplib::Server svr;
-
     auto add_cors_headers = [](httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin",  "*");
         res.set_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
@@ -106,7 +93,6 @@ int main() {
     svr.Options("/get_telemetry", [&](const httplib::Request&, httplib::Response& res) { add_cors_headers(res); res.status = 204; });
     svr.Options("/solve",         [&](const httplib::Request&, httplib::Response& res) { add_cors_headers(res); res.status = 204; });
 
-    // ── ROUTE A: RECEIVE & BUILD STRUCT SOLUTION ────────────────────
     svr.Post("/send_maze", [&](const httplib::Request& req, httplib::Response& res) {
         add_cors_headers(res);
         try {
@@ -117,31 +103,24 @@ int main() {
             else if (spawnDirStr == "south") initialSpawnDirectionInt = 2;
             else if (spawnDirStr == "west")  initialSpawnDirectionInt = 3;
 
-            json path = json::array();
+            long long cap = request["config"]["battery_capacity"].get<long long>();
+            int modeCode = 0; // 0 = CONSTRAINED, 1 = CONTINUOUS
 
-                        // ── MANUAL ROUTE: follow the exact cells from the web UI, no solving ──
-                        if (request.contains("use_manual_route") && request["use_manual_route"].get<bool>()
-                            && request.contains("manual_route") && request["manual_route"].size() >= 2) {
+            if (cap > 1000000) {
+                modeCode = 1;
+                cap = 8;
+            }
 
-                            json route = request["manual_route"];
-                            for (int k = 0; k < route.size(); k++) {
-                                json leg;
-                                leg["cell"] = { route[k][0].get<int>(), route[k][1].get<int>() };
-                                if      (k == 0)                leg["type"] = "start";
-                                else if (k == route.size() - 1) leg["type"] = "destination";
-                                else                            leg["type"] = "move";
-                                path.push_back(leg);
-                            }
-                        } else {
-                            // ── NORMAL: solve the maze as before ──
-                            MazeSolver solver(request); json solution; solver.dumpSolution(solution);
+            MazeSolver solver(request); json solution; solver.dumpSolution(solution);
 
-                            if (solution["feasible"].get<bool>() == false) {
-                                res.set_content("{\"status\":\"stored\",\"feasible\":false}", "application/json");
-                                return;
-                            }
-                            path = solution["path"];
-                        }
+            if (solution["feasible"].get<bool>() == false) {
+                rawM5InstructionString = "CMD:ROUTE_ERROR\n";
+                newMissionAvailable = true;
+                res.set_content("{\"status\":\"stored\",\"feasible\":false}", "application/json");
+                return;
+            }
+
+            json path = solution["path"];
             int totalNodes = path.size();
             int rows = request["config"]["rows"].get<int>();
             int cols = request["config"]["columns"].get<int>();
@@ -157,25 +136,20 @@ int main() {
                 int currC = path[i]["cell"][1].get<int>();
                 int nextR = path[i+1]["cell"][0].get<int>();
                 int nextC = path[i+1]["cell"][1].get<int>();
-
                 int activeHeading = 1;
                 if      (nextR < currR) activeHeading = 0;
                 else if (nextR > currR) activeHeading = 2;
                 else if (nextC > currC) activeHeading = 1;
                 else if (nextC < currC) activeHeading = 3;
-
                 int gridsCount = 0; int j = i; int actionCode = 0;
-
                 while (j < totalNodes - 1) {
                     int rA = path[j]["cell"][0].get<int>(); int cA = path[j]["cell"][1].get<int>();
                     int rB = path[j+1]["cell"][0].get<int>(); int cB = path[j+1]["cell"][1].get<int>();
-
                     int checkHeading = 1;
                     if      (rB < rA) checkHeading = 0;
                     else if (rB > rA) checkHeading = 2;
                     else if (cB > cA) checkHeading = 1;
                     else if (cB < cA) checkHeading = 3;
-
                     if (checkHeading == activeHeading) {
                         gridsCount++; j++;
                         if (path[j]["type"].get<std::string>() == "charge") {
@@ -183,38 +157,29 @@ int main() {
                         }
                     } else break;
                 }
-
                 int targetIntersectionR = path[j]["cell"][0].get<int>();
                 int targetIntersectionC = path[j]["cell"][1].get<int>();
-
                 int totalOpenGridsAhead = countOpenGrids(currR, currC, activeHeading, rows, cols, wallsJson);
                 int stopLimitRemainingGrids = countOpenGrids(targetIntersectionR, targetIntersectionC, activeHeading, rows, cols, wallsJson);
-
                 stepBuffer << "STEP:" << totalCompressedSteps << "," << activeHeading << ","
                            << gridsCount << "," << totalOpenGridsAhead << "," << stopLimitRemainingGrids << "," << actionCode << "\n";
                 totalCompressedSteps++;
                 i = j;
             }
 
-            textStream << "START:" << initialSpawnDirectionInt << "," << totalCompressedSteps << "\n";
+            textStream << "START:" << initialSpawnDirectionInt << "," << totalCompressedSteps << "," << modeCode << "," << cap << "\n";
             textStream << stepBuffer.str();
-            
-            // Stash structured configuration profile in memory pool (Await trigger execution button)
+
             rawM5InstructionString = textStream.str();
             latestMazeJson = request.dump();
             newMissionAvailable = false;
             resetRequested = false;
-
             res.set_content("{\"status\":\"stored\",\"feasible\":true}", "application/json");
         } catch (...) {
             res.status = 400; res.set_content("{\"status\":\"error\"}", "application/json");
         }
     });
 
-    
-    
-    
-    // ── WEB UI REQUESTS A GYRO CALIBRATION ──────────────────────────
     svr.Post("/calibrate", [&](const httplib::Request&, httplib::Response& res) {
         add_cors_headers(res);
         calibrationRequested = true;
@@ -222,7 +187,6 @@ int main() {
         res.set_content("{\"status\":\"calibration_queued\"}", "application/json");
     });
 
-    // ── M5 POLLS THIS; FLAG SELF-CLEARS SO IT ONLY FIRES ONCE ───────
     svr.Get("/get_calibrate", [&](const httplib::Request&, httplib::Response& res) {
         add_cors_headers(res);
         if (calibrationRequested) {
@@ -233,26 +197,22 @@ int main() {
         }
     });
 
-    // ── WEB UI REQUESTS A FULL RUN RESET ───────────────────────────
     svr.Post("/reset", [&](const httplib::Request&, httplib::Response& res) {
         add_cors_headers(res);
         resetRequested = true;
         calibrationRequested = false;
         newMissionAvailable = false;
         removeStartJourneyCommands();
-
         globalTelemetryCache["stepIdx"] = -1;
         globalTelemetryCache["yaw"]     = 0.0;
         globalTelemetryCache["left"]    = 0;
         globalTelemetryCache["front"]   = 0;
         globalTelemetryCache["right"]   = 0;
         globalTelemetryCache["state"]   = "RESETTING";
-
         std::cout << "[SERVER] Reset requested by web UI.\n";
         res.set_content("{\"status\":\"reset_queued\"}", "application/json");
     });
 
-    // ── M5 POLLS THIS; FLAG SELF-CLEARS SO RESET ONLY FIRES ONCE ───
     svr.Get("/get_reset", [&](const httplib::Request&, httplib::Response& res) {
         add_cors_headers(res);
         if (resetRequested) {
@@ -263,12 +223,8 @@ int main() {
         }
     });
 
-    
-    
-    // ── NEW: ROUTE B: INJECT START COMMAND FROM WEB DISPATCHER ────────
     svr.Post("/start_journey", [&](const httplib::Request& req, httplib::Response& res) {
         add_cors_headers(res);
-        // Append execution command onto raw text segment
         removeStartJourneyCommands();
         rawM5InstructionString += "CMD:START_JOURNEY\n";
         newMissionAvailable = true;
@@ -310,17 +266,14 @@ int main() {
             json event = json::parse(req.body);
             std::string eventName = event.value("event", "UNKNOWN");
             int eventValue = event.value("value", 0);
-
             if (eventName == "RUN_RESET_ACK") {
                 globalTelemetryCache["stepIdx"] = -1;
                 globalTelemetryCache["state"] = "IDLE";
             }
-
             std::cout << "[M5 EVENT] " << eventName << " value=" << eventValue << "\n";
             res.set_content("{\"status\":\"ok\"}", "application/json");
         } catch (...) {
-            res.status = 400;
-            res.set_content("{\"status\":\"error\"}", "application/json");
+            res.status = 400; res.set_content("{\"status\":\"error\"}", "application/json");
         }
     });
 
