@@ -20,6 +20,12 @@ extern void sendPeripheralCmd(int commandId, int param1, int param2);
 extern int AUDIO_MISSION_START_TRACK;
 extern int AUDIO_GOING_STATION_TRACK;
 
+///#GEMINI: References linked into the configuration parser
+extern uint8_t robotOperatingMode;
+extern uint8_t maxBatteryCapacity;
+extern uint8_t currentBatteryLevel;
+extern void initBatteryEngine(uint8_t mode, uint8_t capacity);
+
 const char* WIFI_SSID   = "A";
 const char* WIFI_PASS   = "00000000";
 const char* SERVER_IP   = "192.168.137.1";
@@ -29,8 +35,7 @@ unsigned long lastPcStreamTime       = 0;
 unsigned long lastInstructionPollTime = 0;
 unsigned long lastControlPollTime     = 0;
 
-// ── TUNABLE CONFIGURATION PARAMETERS (EDIT HERE) ──
-unsigned long TELEMETRY_INTERVAL_MS = 1000; 
+unsigned long TELEMETRY_INTERVAL_MS = 1000;
 
 void connectWiFi() {
   M5.Lcd.setTextColor(CYAN); M5.Lcd.println("Connecting Wi-Fi...");
@@ -41,7 +46,6 @@ void connectWiFi() {
 
 void streamTelemetryToPC(unsigned long now) {
     if (state == 1 && currentPhase != WALKING_FWD) return;
-
     if (now - lastPcStreamTime >= TELEMETRY_INTERVAL_MS) { 
         lastPcStreamTime = now;
         if (WiFi.status() != WL_CONNECTED) return;
@@ -108,27 +112,28 @@ void pollInstructionsFromServer() {
             String line = payload.substring(startIdx, endIdx);
             line.trim(); startIdx = endIdx + 1;
             
-            if (line.startsWith("CMD:START_JOURNEY")) {
+            ///#GEMINI: Intercept infeasible route profiles immediately
+            if (line.startsWith("CMD:ROUTE_ERROR")) {
+                sendPeripheralCmd(CMD_PLAY_AUDIO, 105, 0); // Plays file 005 in Directory 01
+                Serial.println("[ROUTE ERROR] Server signaled route is infeasible.");
+            }
+            else if (line.startsWith("CMD:START_JOURNEY")) {
                 if (totalMissionSteps > 0 && state == 0) {
                     activeStepIndex = 0;
                     extern float targetHeading; targetHeading = yaw; 
                     resetSpeedHistory(); currentPhase = WALKING_FWD;
                     
-                    ///#GEMINI
-                    // ── AT FIRST: INITIALIZE COMPONENT VALUES TO RENDER FULL GREEN RING ──
-                    extern uint8_t currentBatteryLevel;
-                    extern bool batteryDecrementedThisStep;
-                    extern const int CMD_BATTERY_UPDATE;
-                    currentBatteryLevel = 8;
-                    batteryDecrementedThisStep = false;
-                    sendPeripheralCmd(CMD_BATTERY_UPDATE, currentBatteryLevel, 8);
+                    ///#GEMINI: Refactored battery initialization engine call
+                    initBatteryEngine(robotOperatingMode, maxBatteryCapacity);
+                    
+                    ///#GEMINI: Audio sequence fix for Step 0 charge node layout launches
+                    sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_MISSION_START_TRACK, 0);
+                    delay(5000); // Allow track 1 to play through completely
                     
                     if (missionPipeline[0].action == 1) {
                         sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION_TRACK, 0);
-                    } else {
-                        sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_MISSION_START_TRACK, 0);
+                        delay(1500); // Secondary clear block window for track 3
                     }
-                    delay(5000); 
                     
                     state = 1; M5.Lcd.fillScreen(BLACK);
                     sendPCNotification("JOURNEY_STARTED_ACK", 1);
@@ -136,9 +141,13 @@ void pollInstructionsFromServer() {
                 }
             }
             else if (line.startsWith("START:")) {
-                int spawn, steps;
-                if (sscanf(line.c_str(), "START:%d,%d", &spawn, &steps) == 2) {
+                int spawn, steps, parsedMode = 0, parsedCap = 8;
+                ///#GEMINI: Expanded parameter payload scan matching main.cpp
+                if (sscanf(line.c_str(), "START:%d,%d,%d,%d", &spawn, &steps, &parsedMode, &parsedCap) >= 2) {
                     initialSpawnDirection = (Direction)spawn;
+                    robotOperatingMode  = parsedMode;
+                    maxBatteryCapacity  = parsedCap;
+                    currentBatteryLevel = parsedCap;
                 }
             }
             else if (line.startsWith("STEP:")) {
@@ -209,4 +218,3 @@ void handlePCNetworking(unsigned long now) {
     }
     streamTelemetryToPC(now); 
 }
-

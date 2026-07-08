@@ -40,23 +40,27 @@ bool esp32ChargeFinished     = false;
 unsigned long handshakeResendTime = 0;
 unsigned long postChargeTimer      = 0;
 
-// ── GEMINI: ACTIVE BATTERY LEVEL MANAGEMENT REGISTERS ──
-uint8_t currentBatteryLevel = 8;
-bool batteryDecrementedThisStep = false;
+///#GEMINI: EXTERN SYSTEM WRAPPERS LINKED TO YOUR SEPARATE TAB
+extern uint8_t robotOperatingMode;
+extern uint8_t maxBatteryCapacity;
+extern uint8_t currentBatteryLevel;
+extern void initBatteryEngine(uint8_t mode, uint8_t capacity);
+extern void refreshBatteryDisplay();
+extern void updateBatteryWalking(unsigned long now, unsigned long stepStartTime, int activeStepIndex);
+extern void refillBatteryOnCharge();
 
-///#GEMINI
-// ── GEMINI: INITIAL TURN EVALUATION WATCHDOG ──
+// ── INITIAL TURN EVALUATION WATCHDOG ──
 bool journeyJustStarted = true;
 
 // ── TUNABLE CONFIGURATION PARAMETERS (EDIT HERE) ──
-unsigned long FIRST_GRID_BLIND_TIME = 1300; 
-unsigned long REST_GRID_BLIND_TIME  = 1300;
+unsigned long FIRST_GRID_BLIND_TIME = 1200; 
+unsigned long REST_GRID_BLIND_TIME  = 1200;
 int8_t BASE_TURN_SPEED              = 23;
 uint8_t MP3_VOLUME                  = 25;
 
-int AUDIO_MISSION_START_TRACK       = 101; // Track 1 (101 - 100 = 1 on ESP32 side)
-int AUDIO_GOING_STATION_TRACK       = 103; // Track 3 (103 - 100 = 3 on ESP32 side)
-int AUDIO_MISSION_COMPLETE_TRACK    = 104; // Track 4 (104 - 100 = 4 on ESP32 side)
+int AUDIO_MISSION_START_TRACK       = 101; 
+int AUDIO_GOING_STATION_TRACK       = 103; 
+int AUDIO_MISSION_COMPLETE_TRACK    = 104; 
 
 // ── BLIND SPOT TIMERS & STRAFING FLAGS ──────────────────
 int8_t lastStepIndex          = -1;
@@ -67,7 +71,7 @@ volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
 unsigned long settleTimer    = 0;
-int16_t baselineSpeed        = 30; 
+int16_t baselineSpeed        = 35; 
 
 unsigned long lastStuckCheckTime = 0;
 float lastStuckCheckYaw          = 0.0f;
@@ -118,12 +122,10 @@ void resetRunState() {
 
     chargeStartAckReceived = false;
     esp32ChargeFinished    = false;
+    journeyJustStarted     = true;
 
-    currentBatteryLevel        = 8;
-    batteryDecrementedThisStep = false;
-
-    ///#GEMINI
-    journeyJustStarted         = true;
+    ///#GEMINI: Clear display lock to restore orange breathing upon reset command execution
+    sendPeripheralCmd(CMD_BATTERY_UPDATE, 0, 0);
 
     resetSpeedHistory();
     Serial.println("[RESET INTERRUPT] Local run state fully purged. Return to IDLE.");
@@ -161,9 +163,6 @@ void loop() {
   }
 
   if (state == 1) {
-    ///#GEMINI
-    // ── INITIAL FRAME INTERCEPT GATE ──
-    // Evaluate if Step 0 orientation matches spawn angle before moving forward
     if (journeyJustStarted) {
         journeyJustStarted = false;
         currentPhase = WALKING_FWD; 
@@ -171,22 +170,16 @@ void loop() {
     }
 
     if (!isStrafingLeft && !isStrafingRight) {
-        if (s_left > 0 && s_left <= 50) { isStrafingRight = true;
-        } 
-        else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true;
-        }
+        if (s_left > 0 && s_left <= 50) { isStrafingRight = true; } 
+        else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true; }
     }
     if (isStrafingRight) {
-        if (s_left >= 90) { isStrafingRight = false;
-        } 
-        else { setMotors(baselineSpeed, -baselineSpeed, -baselineSpeed, baselineSpeed); goto renderDisplayLink;
-        }
+        if (s_left >= 90) { isStrafingRight = false; } 
+        else { setMotors(baselineSpeed, -baselineSpeed, -baselineSpeed, baselineSpeed); goto renderDisplayLink; }
     }
     if (isStrafingLeft) {
-        if (s_right >= 90) { isStrafingLeft = false;
-        } 
-        else { setMotors(-baselineSpeed, baselineSpeed, baselineSpeed, -baselineSpeed); goto renderDisplayLink;
-        }
+        if (s_right >= 90) { isStrafingLeft = false; } 
+        else { setMotors(-baselineSpeed, baselineSpeed, baselineSpeed, -baselineSpeed); goto renderDisplayLink; }
     }
 
     switch (currentPhase) {
@@ -196,18 +189,12 @@ void loop() {
             lastStepIndex = activeStepIndex;
             isStrafingLeft = false;
             isStrafingRight = false;
-            batteryDecrementedThisStep = false;
         }
 
         processParallelAlignment(now, lastSampleTime);
-        // ── STEP DECREMENT LATCH (Triggers 1.5s into walking a leg) ──
-        if (!batteryDecrementedThisStep && (now - stepStartTime >= FIRST_GRID_BLIND_TIME)) {
-            batteryDecrementedThisStep = true;
-            if (currentBatteryLevel > 0) {
-                currentBatteryLevel--;
-            }
-            sendPeripheralCmd(CMD_BATTERY_UPDATE, currentBatteryLevel, 8);
-        }
+        
+        ///#GEMINI: Continuous step calculation tracker
+        updateBatteryWalking(now, stepStartTime, activeStepIndex);
 
         if (activeStepIndex >= 0 && activeStepIndex < totalMissionSteps) {
           MovementStep currentLeg = missionPipeline[activeStepIndex];
@@ -246,10 +233,8 @@ void loop() {
           }
         } else {
           sendPCNotification("CHARGING_START", activeStepIndex);
-          // ── INSTANT REFILL ON VALID CHARGING HANDSHAKE ACK ──
-          currentBatteryLevel = 8;
-          sendPeripheralCmd(CMD_BATTERY_UPDATE, currentBatteryLevel, 8);
-
+          ///#GEMINI: Refill through clean function layer
+          refillBatteryOnCharge();
           currentPhase = CHARGING_EXEC;
         }
         break;
@@ -259,7 +244,8 @@ void loop() {
         if (esp32ChargeFinished) {
             sendPCNotification("CHARGING_END", activeStepIndex);
             sendPeripheralCmd(CMD_STOP_AUDIO, 0, 0);
-            sendPeripheralCmd(CMD_BATTERY_UPDATE, 8, 8); 
+            ///#GEMINI: Retain current max parameters seamlessly
+            refreshBatteryDisplay();
             postChargeTimer = now;
             currentPhase = POST_CHARGE_CHIRP;
         }
@@ -294,7 +280,8 @@ void loop() {
                 targetHeading = yaw;
                 resetSpeedHistory(); lastSampleTime = millis();
                 currentPhase = WALKING_FWD; 
-                if (missionPipeline[activeStepIndex].action == 1) {
+                // Guard duplicates on launch step alignment transitions
+                if (activeStepIndex > 0 && missionPipeline[activeStepIndex].action == 1) {
                     sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION_TRACK, 0);
                 }
                 break;
@@ -307,6 +294,10 @@ void loop() {
 
             turnTargetYaw = wrap360(yaw + relativeAngleDelta);
             sendPCNotification("TURNING_START", (int)turnTargetYaw);
+            
+            ///#GEMINI: Sync current telemetry step state out to peripheral before turning
+            refreshBatteryDisplay();
+
             lastStuckCheckTime = now;
             lastStuckCheckYaw = yaw; antiStuckSpeedBoost = 0;
             currentPhase = TURNING;
@@ -355,8 +346,7 @@ void loop() {
         break;
       }
     }
-  } else { stopMotors();
-  }
+  } else { stopMotors(); }
 
   renderDisplayLink:
   if (now - lastDrawTime > 100) {
