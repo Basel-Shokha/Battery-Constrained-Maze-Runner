@@ -17,6 +17,7 @@ const int AUDIO_GOING_STATION = 102;
 const int AUDIO_CHARGING_TUNE = 103;
 const int AUDIO_ROUTE_ERROR   = 104;
 const int AUDIO_VICTORY       = 105;
+
 enum Direction : uint8_t { NORTH = 0, EAST = 1, SOUTH = 2, WEST = 3 };
 struct MovementStep {
     Direction orientation;
@@ -39,23 +40,23 @@ bool esp32ChargeFinished     = false;
 unsigned long handshakeResendTime = 0;
 unsigned long postChargeTimer      = 0;
 
-///#GEMINI
 // ── GEMINI: ACTIVE BATTERY LEVEL MANAGEMENT REGISTERS ──
 uint8_t currentBatteryLevel = 8;
 bool batteryDecrementedThisStep = false;
 
+///#GEMINI
+// ── GEMINI: INITIAL TURN EVALUATION WATCHDOG ──
+bool journeyJustStarted = true;
+
 // ── TUNABLE CONFIGURATION PARAMETERS (EDIT HERE) ──
 unsigned long FIRST_GRID_BLIND_TIME = 1300; 
-unsigned long REST_GRID_BLIND_TIME  = 1300; 
-int8_t BASE_TURN_SPEED              = 23;   
-uint8_t MP3_VOLUME                  = 25;   
+unsigned long REST_GRID_BLIND_TIME  = 1300;
+int8_t BASE_TURN_SPEED              = 23;
+uint8_t MP3_VOLUME                  = 25;
 
-///#GEMINI
-int AUDIO_MISSION_START_TRACK       = 101;  // Track 1 (101 - 100 = 1 on ESP32 side)
-///#GEMINI
-int AUDIO_GOING_STATION_TRACK       = 103;  // Track 3 (103 - 100 = 3 on ESP32 side)
-///#GEMINI
-int AUDIO_MISSION_COMPLETE_TRACK    = 104;  // Track 4 (104 - 100 = 4 on ESP32 side)
+int AUDIO_MISSION_START_TRACK       = 101; // Track 1 (101 - 100 = 1 on ESP32 side)
+int AUDIO_GOING_STATION_TRACK       = 103; // Track 3 (103 - 100 = 3 on ESP32 side)
+int AUDIO_MISSION_COMPLETE_TRACK    = 104; // Track 4 (104 - 100 = 4 on ESP32 side)
 
 // ── BLIND SPOT TIMERS & STRAFING FLAGS ──────────────────
 int8_t lastStepIndex          = -1;
@@ -118,16 +119,19 @@ void resetRunState() {
     chargeStartAckReceived = false;
     esp32ChargeFinished    = false;
 
-    ///#GEMINI
     currentBatteryLevel        = 8;
     batteryDecrementedThisStep = false;
+
+    ///#GEMINI
+    journeyJustStarted         = true;
 
     resetSpeedHistory();
     Serial.println("[RESET INTERRUPT] Local run state fully purged. Return to IDLE.");
 }
 
 void setup() {
-  M5.begin(); Serial.begin(115200); Wire.begin(0, 26); 
+  M5.begin(); Serial.begin(115200);
+  Wire.begin(0, 26); 
   initPeripheralUART(); 
   M5.IMU.Init();
   M5.IMU.SetGyroFsr(MPU6886::GFS_250DPS);
@@ -145,7 +149,6 @@ void loop() {
   M5.update();
   updateYaw(); 
   unsigned long now = millis();
-
   if (M5.BtnB.wasPressed() || (Serial.available() > 0 && Serial.read() == 'r')) {
       resetRunState();
       return;
@@ -153,22 +156,37 @@ void loop() {
 
   receivePeripheralTelemetry();
 
-  if (state == 0) {
+  if (state == 0 ) {
       handlePCNetworking(now);
   }
 
   if (state == 1) {
+    ///#GEMINI
+    // ── INITIAL FRAME INTERCEPT GATE ──
+    // Evaluate if Step 0 orientation matches spawn angle before moving forward
+    if (journeyJustStarted) {
+        journeyJustStarted = false;
+        currentPhase = WALKING_FWD; 
+        goto targetTurnCalculation;
+    }
+
     if (!isStrafingLeft && !isStrafingRight) {
-        if (s_left > 0 && s_left <= 50) { isStrafingRight = true; } 
-        else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true; }
+        if (s_left > 0 && s_left <= 50) { isStrafingRight = true;
+        } 
+        else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true;
+        }
     }
     if (isStrafingRight) {
-        if (s_left >= 90) { isStrafingRight = false; } 
-        else { setMotors(baselineSpeed, -baselineSpeed, -baselineSpeed, baselineSpeed); goto renderDisplayLink; }
+        if (s_left >= 90) { isStrafingRight = false;
+        } 
+        else { setMotors(baselineSpeed, -baselineSpeed, -baselineSpeed, baselineSpeed); goto renderDisplayLink;
+        }
     }
     if (isStrafingLeft) {
-        if (s_right >= 90) { isStrafingLeft = false; } 
-        else { setMotors(-baselineSpeed, baselineSpeed, baselineSpeed, -baselineSpeed); goto renderDisplayLink; }
+        if (s_right >= 90) { isStrafingLeft = false;
+        } 
+        else { setMotors(-baselineSpeed, baselineSpeed, baselineSpeed, -baselineSpeed); goto renderDisplayLink;
+        }
     }
 
     switch (currentPhase) {
@@ -178,13 +196,10 @@ void loop() {
             lastStepIndex = activeStepIndex;
             isStrafingLeft = false;
             isStrafingRight = false;
-            ///#GEMINI
-            batteryDecrementedThisStep = false; // Clear step tracking flag
+            batteryDecrementedThisStep = false;
         }
 
         processParallelAlignment(now, lastSampleTime);
-
-        ///#GEMINI
         // ── STEP DECREMENT LATCH (Triggers 1.5s into walking a leg) ──
         if (!batteryDecrementedThisStep && (now - stepStartTime >= FIRST_GRID_BLIND_TIME)) {
             batteryDecrementedThisStep = true;
@@ -231,8 +246,6 @@ void loop() {
           }
         } else {
           sendPCNotification("CHARGING_START", activeStepIndex);
-
-          ///#GEMINI
           // ── INSTANT REFILL ON VALID CHARGING HANDSHAKE ACK ──
           currentBatteryLevel = 8;
           sendPeripheralCmd(CMD_BATTERY_UPDATE, currentBatteryLevel, 8);
@@ -335,13 +348,15 @@ void loop() {
               sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION_TRACK, 0);
           }
         } else {
-          lastStuckCheckTime = now; lastStuckCheckYaw = yaw;
+          lastStuckCheckTime = now;
+          lastStuckCheckYaw = yaw;
           currentPhase = TURNING;
         }
         break;
       }
     }
-  } else { stopMotors(); }
+  } else { stopMotors();
+  }
 
   renderDisplayLink:
   if (now - lastDrawTime > 100) {
@@ -359,4 +374,3 @@ void loop() {
   }
   delay(2);
 }
-
