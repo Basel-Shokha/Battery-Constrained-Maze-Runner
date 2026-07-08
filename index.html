@@ -10,8 +10,6 @@
   --cell-active: #ffffff; --cell-inactive: #e2e8f0; --panel-bg: #f8fafc;
   --danger: #ef4444; --success: #22c55e; --warn: #f59e0b;
   --cell-size: 64px; --wall-size: 8px;
-  --rover-width: calc(var(--cell-size) * 0.333333);
-  --rover-length: calc(var(--cell-size) * 0.4);
 }
 body.theme-dark {
   --bg:#0f172a;--surface:#1e293b;--border:#334155;--text:#f8fafc;
@@ -60,11 +58,10 @@ button:hover{filter:brightness(0.9);}
 .wall-v.on,.wall-h.on{background:var(--wall-active);z-index:2;box-shadow:0 0 5px var(--wall-active);}
 .corner{width:var(--wall-size);height:var(--wall-size);background:var(--bg);}
 .cell-icon{position:absolute;width:82%;height:82%;pointer-events:none;display:flex;align-items:center;justify-content:center;z-index:5;}
-.cell-icon.rover-cell-icon{width:var(--rover-width);height:var(--rover-length);}
 #path-canvas{position:absolute;top:0;left:0;pointer-events:none;z-index:10;}
 
 /* Rover animation */
-#rover-anim{position:absolute;pointer-events:none;z-index:20;display:none;transform:translate(-50%,-50%);width:var(--rover-width);height:var(--rover-length);}
+#rover-anim{position:absolute;pointer-events:none;z-index:20;display:none;transform:translate(-50%,-50%);}
 
 /* Bottom bar */
 #path-output{background:var(--bg);border-top:1px solid var(--border);padding:8px 16px;font-size:12px;flex-shrink:0;min-height:44px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
@@ -354,16 +351,6 @@ async function sendMazeToM5() {
   const req = buildRequestJSON(); // Wraps up your configured layout payload
 
   try {
-    const solveRes = await fetch('http://localhost:8085/solve', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(req)
-    });
-    if (solveRes.ok) {
-      const solution = await solveRes.json();
-      applyResponseData(solution, false);
-    }
-
     const res = await fetch('http://localhost:8085/send_maze', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
@@ -433,7 +420,7 @@ function evStationSVG() {
 function roverSVG(dir) {
   const r = {north:0, east:90, south:180, west:270}[dir] || 0;
   return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"
-    style="width:100%;height:100%;overflow:visible;transform-origin:center;transform:rotate(${r}deg);transition:transform 0.25s">
+    style="width:100%;height:100%;transform:rotate(${r}deg);transition:transform 0.25s">
     <rect x="26" y="18" width="48" height="64" rx="9" fill="#f97316"/>
     <rect x="30" y="14" width="11" height="7" rx="2" fill="#fef08a"/>
     <rect x="59" y="14" width="11" height="7" rx="2" fill="#fef08a"/>
@@ -472,7 +459,7 @@ function refreshIcons() {
     const c = document.getElementById(`cell-${startCell[0]}-${startCell[1]}`);
     if (c) {
       const d = document.createElement('div');
-      d.className = 'cell-icon rover-cell-icon';
+      d.className = 'cell-icon';
       d.id = 'static-start-rover'; // <-- ADD THIS ID
       d.innerHTML = roverSVG(robotDirection);
       c.appendChild(d);
@@ -657,36 +644,13 @@ function hideRover() {
 function placeRoverAt(r, c, dir) {
   const rv = document.getElementById('rover-anim');
   const p = getCellCenter(r, c);
-  rv.style.width = 'var(--rover-width)';
-  rv.style.height = 'var(--rover-length)';
+  const sz = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 64;
+  rv.style.width = sz + 'px';
+  rv.style.height = sz + 'px';
   rv.style.left = p.x + 'px';
   rv.style.top  = p.y + 'px';
   rv.innerHTML  = roverSVG(dir);
   rv.style.display = 'block';
-}
-
-// ── LIVE TELEMETRY ROVER TRACKER ───────────────────────────────
-let telLegs = null, telPathRef = null, telLastStep = -1, telAnimating = false;
-let telCurrentCell = null, telCurrentDir = null;
-
-function telHeadingOf(a, b) {
-  if (b[0] < a[0]) return 'north';
-  if (b[0] > a[0]) return 'south';
-  if (b[1] > a[1]) return 'east';
-  return 'west';
-}
-
-// Compress the per-cell path into legs, exactly like the server does,
-// so telLegs[stepIdx] lines up 1:1 with the rover's activeStepIndex.
-function telBuildLegs(path) {
-  const legs = []; let i = 0;
-  while (i < path.length - 1) {
-    const h = telHeadingOf(path[i].cell, path[i + 1].cell); let j = i;
-    while (j < path.length - 1 && telHeadingOf(path[j].cell, path[j + 1].cell) === h) j++;
-    legs.push({ startIndex: i, endIndex: j, start: path[i].cell, end: path[j].cell, heading: h, cells: j - i });
-    i = j;
-  }
-  return legs;
 }
 
 function animateTo(r, c, dir) {
@@ -722,63 +686,6 @@ function animateTo(r, c, dir) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-async function animateTelemetryLeg(stepIdx) {
-  if (!currentPath || currentPath.length < 2) return;
-  if (telPathRef !== currentPath) {
-    telLegs = telBuildLegs(currentPath);
-    telPathRef = currentPath;
-    telLastStep = -1;
-    telCurrentCell = null;
-    telCurrentDir = robotDirection;
-  }
-
-  const leg = telLegs && telLegs[stepIdx];
-  if (!leg || telAnimating) return;
-
-  telAnimating = true;
-  animCancel = false;
-
-  const staticRover = document.getElementById('static-start-rover');
-  if (staticRover) staticRover.style.display = 'none';
-
-  if (!telCurrentCell ||
-      telCurrentCell[0] !== leg.start[0] ||
-      telCurrentCell[1] !== leg.start[1]) {
-    placeRoverAt(leg.start[0], leg.start[1], leg.heading);
-    telCurrentCell = [leg.start[0], leg.start[1]];
-  }
-
-  telCurrentDir = leg.heading;
-  const badge = document.getElementById('step-badge');
-  badge.style.display = 'inline';
-
-  for (let i = leg.startIndex + 1; i <= leg.endIndex; i++) {
-    if (animCancel) break;
-    const [r, c] = currentPath[i].cell;
-    badge.textContent = `live ${stepIdx + 1}/${telLegs.length} • [${r},${c}]`;
-    await animateTo(r, c, leg.heading);
-    telCurrentCell = [r, c];
-  }
-
-  telAnimating = false;
-}
-
-function rotateTelemetryRover(dir) {
-  const rv = document.getElementById('rover-anim');
-  if (rv.style.display === 'none') return;
-  const svg = rv.querySelector('svg');
-  if (!svg) return;
-  const deg = {north:0, east:90, south:180, west:270}[dir] ?? 0;
-  svg.style.transform = `rotate(${deg}deg)`;
-  telCurrentDir = dir;
-}
-
-function showTelemetryCharging(isCharging) {
-  const rv = document.getElementById('rover-anim');
-  if (!rv) return;
-  rv.classList.toggle('rover-charging', isCharging);
-}
 
 async function animateRover(steps) {
   if (animRunning) { animCancel = true; await sleep(200); }
@@ -894,7 +801,7 @@ async function solve() {
 }
 
 
-function applyResponseData(data, animatePreview = true) {
+function applyResponseData(data) {
   // Restore grid state from response if config is present
   if (data.config) {
     if (data.config.rows)    document.getElementById('rows').value = data.config.rows;
@@ -976,7 +883,7 @@ function applyResponseData(data, animatePreview = true) {
 
   // Draw lines on canvas and trigger local screen rover simulation mechanics
   drawPath(steps);
-  if (animatePreview) animateRover(steps);
+  animateRover(steps);
 }
 
 
@@ -1246,63 +1153,16 @@ function loadGalleryMaze(data) {
 
     if (stateLabel === "DRIVING" || stateLabel === "RUNNING") {
       stateEl.className = "status-success";
-      showTelemetryCharging(false);
-      if (currentPath && currentPath.length > 1) {
-        if (!telAnimating) animCancel = true;
-        const staticRover = document.getElementById('static-start-rover');
-        if (staticRover) staticRover.style.display = 'none';
-
-        // Rebuild legs whenever the path changes (indexed like the rover's stepIdx)
-        if (telPathRef !== currentPath) {
-          telLegs = telBuildLegs(currentPath);
-          telPathRef = currentPath;
-          telLastStep = -1;
-          telCurrentCell = null;
-          telCurrentDir = robotDirection;
-        }
-        const leg = telLegs[stepIdx];
-        if (leg) {
-          if (stepIdx !== telLastStep && !telAnimating) {
-            telLastStep = stepIdx;
-            animateTelemetryLeg(stepIdx);
-          }
-
-          document.getElementById('step-badge').style.display = 'inline';
-          document.getElementById('step-badge').textContent =
-            `live ${stepIdx + 1}/${telLegs.length} • ${leg.heading.toUpperCase()}`;
-        }
-      } else {
-        document.getElementById('path-status').innerHTML =
-          `<span class="status-warn">Live telemetry connected. Click SOLVE first so the screen knows the rover path.</span>`;
+      if (currentPath && currentPath[stepIdx]) {
+        const currentCell = currentPath[stepIdx].cell;
+        document.querySelectorAll('.cell').forEach(c => c.style.filter = '');
+        const cellEl = document.getElementById(`cell-${currentCell[0]}-${currentCell[1]}`);
+        if (cellEl) cellEl.style.filter = "drop-shadow(0 0 8px #3b82f6) brightness(1.2)";
       }
-    } else if (stateLabel === "PIVOT_TURNING" || stateLabel === "TURNING") {
+    } else if (stateLabel === "PIVOT_TURNING") {
       stateEl.className = "status-warn";
-      showTelemetryCharging(false);
-      if (currentPath && currentPath.length > 1) {
-        if (telPathRef !== currentPath) {
-          telLegs = telBuildLegs(currentPath);
-          telPathRef = currentPath;
-          telCurrentCell = null;
-          telCurrentDir = robotDirection;
-        }
-        const leg = telLegs && telLegs[stepIdx];
-        if (leg) {
-          rotateTelemetryRover(leg.heading);
-          document.getElementById('step-badge').style.display = 'inline';
-          document.getElementById('step-badge').textContent =
-            `turning to ${leg.heading.toUpperCase()}`;
-        }
-      }
-    } else if (stateLabel === "CHARGING") {
-      stateEl.className = "status-warn";
-      showTelemetryCharging(true);
-      document.getElementById('step-badge').style.display = 'inline';
-      document.getElementById('step-badge').textContent = 'charging';
     } else {
       stateEl.className = "status-warn";
-      showTelemetryCharging(false);
-      telLastStep = -1;
-      telAnimating = false;
     }
   };
 
@@ -1324,7 +1184,7 @@ function loadGalleryMaze(data) {
           stateEl.className = "status-danger";
         }
       }
-    }, 1000);
+    }, 200);
   }
 
   window.onload = () => {
