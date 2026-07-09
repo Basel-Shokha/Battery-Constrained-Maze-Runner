@@ -197,7 +197,7 @@ void pollResetRequest() {
     http.begin(url);
     if (http.GET() == HTTP_CODE_OK) {
         String payload = http.getString();
-        if (payload.indexOf("\"reset\\\":true") >= 0) {
+        if (payload.indexOf("\"reset\":true") >= 0) {
             resetRunState();
             sendPCNotification("RUN_RESET_ACK", 1);
             Serial.println("STATUS:RESET_VIA_SERVER_CMD");

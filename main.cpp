@@ -6,10 +6,24 @@
 #include <string>
 #include <sstream>
 #include <set>
+#include <thread>
+#include <mutex>
 #include "External Libraries/httplib.h"
 #include "MazeSolver.h"
 
+#ifdef _WIN32
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #pragma comment(lib, "ws2_32.lib")
+#else
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+  #include <unistd.h>
+#endif
+
 using nlohmann::json;
+using namespace std;
 
 std::string rawM5InstructionString = "START:1,0,0,8\n";
 std::string latestMazeJson = "{}";
@@ -17,6 +31,7 @@ json globalTelemetryCache = {{"stepIdx",0},{"yaw",0.0},{"left",0},{"front",0},{"
 bool newMissionAvailable = false;
 bool calibrationRequested = false;
 bool resetRequested = false;
+mutex telemetryMutex;
 
 void printM5Packet(const std::string& packet) {
     std::cout << "\n========== PACKET SENT TO M5 ==========\n"
@@ -76,6 +91,44 @@ int countOpenGrids(int startR, int startC, int direction, int maxRows, int maxCo
         currR = nextR; currC = nextC;
     }
     return openGrids;
+}
+
+void udpTelemetryListener() {
+#ifdef _WIN32
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) { cerr << "[UDP] socket creation failed\n"; return; }
+
+    sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port        = htons(8086);
+
+    if (bind(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        cerr << "[UDP] bind failed on port 8086\n"; return;
+    }
+    cout << "[UDP] Telemetry listener bound on port 8086\n";
+
+    char buffer[512];
+    while (true) {
+        int len = recvfrom(sock, buffer, sizeof(buffer) - 1, 0, nullptr, nullptr);
+        if (len <= 0) continue;
+        buffer[len] = '\0';
+        try {
+            json data = json::parse(buffer);
+            lock_guard<mutex> lock(telemetryMutex);
+            globalTelemetryCache["stepIdx"] = data["stepIdx"];
+            globalTelemetryCache["yaw"]     = data["yaw"];
+            globalTelemetryCache["left"]    = data["left"];
+            globalTelemetryCache["front"]   = data["front"];
+            globalTelemetryCache["right"]   = data["right"];
+            globalTelemetryCache["state"]   = data["state"];
+        } catch (...) {
+            // malformed datagram, ignore and wait for the next one
+        }
+    }
 }
 
 int main() {
@@ -297,7 +350,9 @@ int main() {
     });
 
     svr.Get("/get_telemetry", [&](const httplib::Request&, httplib::Response& res) {
-        add_cors_headers(res); res.set_content(globalTelemetryCache.dump(), "application/json");
+        add_cors_headers(res);
+        lock_guard<mutex> lock(telemetryMutex);
+        res.set_content(globalTelemetryCache.dump(), "application/json");
     });
 
     svr.Post("/solve", [&](const httplib::Request& req, httplib::Response& res) {
@@ -318,7 +373,8 @@ int main() {
         res.set_content(html, "text/html");
     });
 
-    std::cout << "Wireless local server listening at http://0.0.0.0:8085\n";
-    svr.listen("0.0.0.0", 8085);
+     thread(udpTelemetryListener).detach();
+     std::cout << "Wireless local server listening at http://0.0.0.0:8085\n";
+     svr.listen("0.0.0.0", 8085);
     return 0;
 }
