@@ -26,9 +26,9 @@ extern uint8_t maxBatteryCapacity;
 extern uint8_t currentBatteryLevel;
 extern void initBatteryEngine(uint8_t mode, uint8_t capacity);
 
-const char* WIFI_SSID   = "A";
-const char* WIFI_PASS   = "00000000";
-const char* SERVER_IP   = "192.168.137.1";
+const char* WIFI_SSID   = "Fadi_5G-EXT2G";
+const char* WIFI_PASS   = "F0507676430";
+const char* SERVER_IP   = "192.168.0.118";
 const char* SERVER_PORT = "8085";
 const uint16_t TELEMETRY_UDP_PORT = 8086;
 
@@ -48,8 +48,7 @@ void connectWiFi() {
 }
 
 void streamTelemetryToPC(unsigned long now) {
-    if (state == 1 && currentPhase != WALKING_FWD) return;
-    if (now - lastPcStreamTime >= TELEMETRY_INTERVAL_MS) { 
+    if (now - lastPcStreamTime >= TELEMETRY_INTERVAL_MS) {
         lastPcStreamTime = now;
         if (WiFi.status() != WL_CONNECTED) return;
         

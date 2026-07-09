@@ -88,6 +88,7 @@ extern float wrap360(float a);
 
 extern void connectWiFi();
 extern void handlePCNetworking(unsigned long now);
+extern void streamTelemetryToPC(unsigned long now);
 extern void sendPCNotification(const char* eventType, int logValue);
 extern void initPeripheralUART();
 extern void receivePeripheralTelemetry();
@@ -160,6 +161,8 @@ void loop() {
 
   if (state == 0 ) {
       handlePCNetworking(now);
+  } else {
+      streamTelemetryToPC(now);
   }
 
   if (state == 1) {
