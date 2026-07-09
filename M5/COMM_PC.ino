@@ -30,12 +30,15 @@ const char* WIFI_SSID   = "A";
 const char* WIFI_PASS   = "00000000";
 const char* SERVER_IP   = "192.168.137.1";
 const char* SERVER_PORT = "8085";
+const uint16_t TELEMETRY_UDP_PORT = 8086;
+
+WiFiUDP telemetryUdp;
 
 unsigned long lastPcStreamTime       = 0;
 unsigned long lastInstructionPollTime = 0;
 unsigned long lastControlPollTime     = 0;
 
-unsigned long TELEMETRY_INTERVAL_MS = 1000;
+unsigned long TELEMETRY_INTERVAL_MS = 80;
 
 void connectWiFi() {
   M5.Lcd.setTextColor(CYAN); M5.Lcd.println("Connecting Wi-Fi...");
@@ -50,17 +53,13 @@ void streamTelemetryToPC(unsigned long now) {
         lastPcStreamTime = now;
         if (WiFi.status() != WL_CONNECTED) return;
         
-        HTTPClient http;
-        char url[128];
-        sprintf(url, "http://%s:%s/update_telemetry", SERVER_IP, SERVER_PORT);
-        http.begin(url);
-        http.addHeader("Content-Type", "application/json");
         const char* stateLabel = (state == 1) ? "RUNNING" : "IDLE";
         char jsonBuf[256];
         sprintf(jsonBuf, "{\"stepIdx\":%d,\"yaw\":%.1f,\"left\":%d,\"front\":%d,\"right\":%d,\"state\":\"%s\"}",
                 activeStepIndex, yaw, s_left, s_front, s_right, stateLabel);
-        http.POST(jsonBuf);
-        http.end();
+        telemetryUdp.beginPacket(SERVER_IP, TELEMETRY_UDP_PORT);
+        telemetryUdp.write((const uint8_t*)jsonBuf, strlen(jsonBuf));
+        telemetryUdp.endPacket();
     }
 }
 
