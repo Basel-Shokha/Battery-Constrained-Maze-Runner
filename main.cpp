@@ -106,7 +106,7 @@ void udpTelemetryListener() {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port        = htons(8086);
 
-    if (bind(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (::bind(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
         cerr << "[UDP] bind failed on port 8086\n"; return;
     }
     cout << "[UDP] Telemetry listener bound on port 8086\n";
