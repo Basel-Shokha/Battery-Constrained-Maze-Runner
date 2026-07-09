@@ -1343,6 +1343,14 @@ function loadGalleryMaze(data) {
 
 */
 // ── GLOBAL CLOSED-LOOP TELEMETRY TRACKER ENGINE ──────────────────────
+function yawToDir(yaw) {
+    let a = ((yaw % 360) + 360) % 360;
+    if (a >= 315 || a < 45)  return 'north';
+    if (a < 135)             return 'east';
+    if (a < 225)             return 'south';
+    return 'west';
+  }
+
   window.updateLiveTrackerUI = function(stepIdx, yaw, left, front, right, stateLabel) {
     const stateEl = document.getElementById('tele-state');
     if (!stateEl) return;
@@ -1354,18 +1362,17 @@ function loadGalleryMaze(data) {
     document.getElementById('tele-laser-r').textContent = String(right).padStart(4, '0');
 
     if (stateLabel === "DRIVING" || stateLabel === "RUNNING") {
-      stateEl.className = "status-success";
-      if (currentPath && currentPath[stepIdx]) {
-        const currentCell = currentPath[stepIdx].cell;
-        document.querySelectorAll('.cell').forEach(c => c.style.filter = '');
-        const cellEl = document.getElementById(`cell-${currentCell[0]}-${currentCell[1]}`);
-        if (cellEl) cellEl.style.filter = "drop-shadow(0 0 8px #3b82f6) brightness(1.2)";
-      }
-    } else if (stateLabel === "PIVOT_TURNING") {
-      stateEl.className = "status-warn";
-    } else {
-      stateEl.className = "status-warn";
-    }
+          stateEl.className = "status-success";
+          if (currentPath && currentPath[stepIdx]) {
+            const currentCell = currentPath[stepIdx].cell;
+            placeRoverAt(currentCell[0], currentCell[1], yawToDir(yaw));
+          }
+        } else if (stateLabel === "PIVOT_TURNING") {
+          stateEl.className = "status-warn";
+        } else {
+          stateEl.className = "status-warn";
+          hideRover();
+        }
   };
 
 // ── INITIALIZE AUTOMATIC BACKGROUND WI-FI POLLING LOOP ─────────────
