@@ -52,7 +52,7 @@ extern void refillBatteryOnCharge();
 bool journeyJustStarted = true;
 
 // ── FIXED USER SPEED PARAMETERS ──
-unsigned long FIRST_GRID_BLIND_TIME = 1300; 
+unsigned long FIRST_GRID_BLIND_TIME = 1500; 
 unsigned long REST_GRID_BLIND_TIME  = 1300;
 int8_t BASE_TURN_SPEED              = 23; // Reverted back to 23 for precision
 uint8_t MP3_VOLUME                  = 25;
