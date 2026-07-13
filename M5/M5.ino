@@ -11,6 +11,7 @@ const int CMD_PLAY_AUDIO     = 1;
 const int CMD_STOP_AUDIO     = 2;
 const int CMD_START_CHARGE   = 3;
 const int CMD_BATTERY_UPDATE = 4;
+const int CMD_RED_LED_RING   = 5; 
 
 const int AUDIO_MISSION_START = 101;
 const int AUDIO_GOING_STATION = 102;
@@ -40,7 +41,6 @@ bool esp32ChargeFinished     = false;
 unsigned long handshakeResendTime = 0;
 unsigned long postChargeTimer      = 0;
 
-///#GEMINI: EXTERN SYSTEM WRAPPERS LINKED TO YOUR SEPARATE TAB
 extern uint8_t robotOperatingMode;
 extern uint8_t maxBatteryCapacity;
 extern uint8_t currentBatteryLevel;
@@ -49,20 +49,18 @@ extern void refreshBatteryDisplay();
 extern void updateBatteryWalking(unsigned long now, unsigned long stepStartTime, int activeStepIndex);
 extern void refillBatteryOnCharge();
 
-// ── INITIAL TURN EVALUATION WATCHDOG ──
 bool journeyJustStarted = true;
 
-// ── TUNABLE CONFIGURATION PARAMETERS (EDIT HERE) ──
-unsigned long FIRST_GRID_BLIND_TIME = 1200; 
-unsigned long REST_GRID_BLIND_TIME  = 1200;
-int8_t BASE_TURN_SPEED              = 23;
+// ── FIXED USER SPEED PARAMETERS ──
+unsigned long FIRST_GRID_BLIND_TIME = 1300; 
+unsigned long REST_GRID_BLIND_TIME  = 1300;
+int8_t BASE_TURN_SPEED              = 23; // Reverted back to 23 for precision
 uint8_t MP3_VOLUME                  = 25;
 
 int AUDIO_MISSION_START_TRACK       = 101; 
 int AUDIO_GOING_STATION_TRACK       = 103; 
 int AUDIO_MISSION_COMPLETE_TRACK    = 104; 
 
-// ── BLIND SPOT TIMERS & STRAFING FLAGS ──────────────────
 int8_t lastStepIndex          = -1;
 unsigned long stepStartTime   = 0;
 bool isStrafingLeft           = false;
@@ -71,7 +69,7 @@ volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
 unsigned long settleTimer    = 0;
-int16_t baselineSpeed        = 35; 
+int16_t baselineSpeed        = 30; 
 
 unsigned long lastStuckCheckTime = 0;
 float lastStuckCheckYaw          = 0.0f;
@@ -88,11 +86,24 @@ extern float wrap360(float a);
 
 extern void connectWiFi();
 extern void handlePCNetworking(unsigned long now);
-extern void streamTelemetryToPC(unsigned long now);
 extern void sendPCNotification(const char* eventType, int logValue);
 extern void initPeripheralUART();
 extern void receivePeripheralTelemetry();
 extern void sendPeripheralCmd(int commandId, int param1, int param2);
+extern bool pcConnected;
+extern bool routeErrorFlag;
+
+uint8_t batteryAtStartOfLeg = 8;
+
+unsigned long journeyStartTime          = 0;
+unsigned long journeyEndTime            = 0; 
+uint32_t totalGridsWalked               = 0;
+uint32_t totalChargingStationsCleared   = 0;
+uint32_t totalSteeringCorrections       = 0;
+uint32_t totalPivotTurns                = 0;
+bool showSummaryScreen                  = false;
+bool summaryScreenCleared               = false; 
+extern bool isAligning;
 
 void sendI2C(uint8_t reg, int8_t speed) {
   Wire.beginTransmission(0x38); Wire.write(reg); Wire.write(speed); Wire.endTransmission();
@@ -101,14 +112,6 @@ void setMotors(int8_t fl, int8_t fr, int8_t rl, int8_t rr) {
   sendI2C(0x00, fl); sendI2C(0x01, fr); sendI2C(0x02, rl); sendI2C(0x03, rr);
 }
 void stopMotors() { setMotors(0, 0, 0, 0); }
-
-const char* getDirectionName(Direction dir) {
-  if (dir == NORTH) return "NORTH";
-  if (dir == EAST)  return "EAST";
-  if (dir == SOUTH) return "SOUTH"; 
-  if (dir == WEST)  return "WEST";
-  return "UNKNOWN";
-}
 
 void resetRunState() {
     stopMotors();               
@@ -124,11 +127,13 @@ void resetRunState() {
     chargeStartAckReceived = false;
     esp32ChargeFinished    = false;
     journeyJustStarted     = true;
+    showSummaryScreen      = false;
+    summaryScreenCleared   = false;
+    routeErrorFlag         = false;
 
-    ///#GEMINI: Clear display lock to restore orange breathing upon reset command execution
     sendPeripheralCmd(CMD_BATTERY_UPDATE, 0, 0);
-
     resetSpeedHistory();
+    M5.Lcd.fillScreen(BLACK);
     Serial.println("[RESET INTERRUPT] Local run state fully purged. Return to IDLE.");
 }
 
@@ -152,29 +157,35 @@ void loop() {
   M5.update();
   updateYaw(); 
   unsigned long now = millis();
-  if (M5.BtnB.wasPressed() || (Serial.available() > 0 && Serial.read() == 'r')) {
+  
+  if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || (Serial.available() > 0 && Serial.read() == 'r')) {
       resetRunState();
       return;
   }
 
   receivePeripheralTelemetry();
-
-  if (state == 0 ) {
-      handlePCNetworking(now);
-  } else {
-      streamTelemetryToPC(now);
-  }
+  handlePCNetworking(now);
 
   if (state == 1) {
     if (journeyJustStarted) {
         journeyJustStarted = false;
         currentPhase = WALKING_FWD; 
+        
+        journeyStartTime             = millis();
+        journeyEndTime               = 0;
+        totalGridsWalked             = 0;
+        totalChargingStationsCleared = 0;
+        totalSteeringCorrections     = 0;
+        totalPivotTurns              = 0;
+        showSummaryScreen            = false;
+        summaryScreenCleared         = false;
+        
         goto targetTurnCalculation;
     }
 
     if (!isStrafingLeft && !isStrafingRight) {
-        if (s_left > 0 && s_left <= 50) { isStrafingRight = true; } 
-        else if (s_right > 0 && s_right <= 50) { isStrafingLeft = true; }
+        if (s_left > 0 && s_left <= 75) { isStrafingRight = true; } 
+        else if (s_right > 0 && s_right <= 75) { isStrafingLeft = true; }
     }
     if (isStrafingRight) {
         if (s_left >= 90) { isStrafingRight = false; } 
@@ -192,11 +203,17 @@ void loop() {
             lastStepIndex = activeStepIndex;
             isStrafingLeft = false;
             isStrafingRight = false;
+            batteryAtStartOfLeg = currentBatteryLevel;
         }
 
         processParallelAlignment(now, lastSampleTime);
         
-        ///#GEMINI: Continuous step calculation tracker
+        static bool lastAlignState = false;
+        if (isAligning && !lastAlignState) {
+            totalSteeringCorrections++;
+        }
+        lastAlignState = isAligning;
+        
         updateBatteryWalking(now, stepStartTime, activeStepIndex);
 
         if (activeStepIndex >= 0 && activeStepIndex < totalMissionSteps) {
@@ -210,6 +227,15 @@ void loop() {
           bool isBlindSpotActive = (now - stepStartTime < blindSpotDuration);
           if (!isBlindSpotActive && s_front > 0 && s_front <= stopThresholdMm) {
             stopMotors();
+            
+            if (batteryAtStartOfLeg >= currentLeg.gridsToCross) {
+                currentBatteryLevel = batteryAtStartOfLeg - currentLeg.gridsToCross;
+            } else {
+                currentBatteryLevel = 0;
+            }
+            refreshBatteryDisplay();
+            totalGridsWalked += currentLeg.gridsToCross;
+
             if (currentLeg.action == 1) {
               sendPCNotification("ARRIVED_STATION", activeStepIndex);
               chargeStartAckReceived = false;
@@ -236,7 +262,6 @@ void loop() {
           }
         } else {
           sendPCNotification("CHARGING_START", activeStepIndex);
-          ///#GEMINI: Refill through clean function layer
           refillBatteryOnCharge();
           currentPhase = CHARGING_EXEC;
         }
@@ -247,8 +272,8 @@ void loop() {
         if (esp32ChargeFinished) {
             sendPCNotification("CHARGING_END", activeStepIndex);
             sendPeripheralCmd(CMD_STOP_AUDIO, 0, 0);
-            ///#GEMINI: Retain current max parameters seamlessly
             refreshBatteryDisplay();
+            totalChargingStationsCleared++; 
             postChargeTimer = now;
             currentPhase = POST_CHARGE_CHIRP;
         }
@@ -269,8 +294,10 @@ void loop() {
         if (activeStepIndex >= totalMissionSteps) {
           state = 0;
           stopMotors();
+          journeyEndTime = millis(); 
           sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_MISSION_COMPLETE_TRACK, 0);
           sendPCNotification("MISSION_COMPLETE", 200);
+          showSummaryScreen = true; 
           break;
         }
 
@@ -283,7 +310,6 @@ void loop() {
                 targetHeading = yaw;
                 resetSpeedHistory(); lastSampleTime = millis();
                 currentPhase = WALKING_FWD; 
-                // Guard duplicates on launch step alignment transitions
                 if (activeStepIndex > 0 && missionPipeline[activeStepIndex].action == 1) {
                     sendPeripheralCmd(CMD_PLAY_AUDIO, AUDIO_GOING_STATION_TRACK, 0);
                 }
@@ -298,9 +324,8 @@ void loop() {
             turnTargetYaw = wrap360(yaw + relativeAngleDelta);
             sendPCNotification("TURNING_START", (int)turnTargetYaw);
             
-            ///#GEMINI: Sync current telemetry step state out to peripheral before turning
             refreshBatteryDisplay();
-
+            totalPivotTurns++; 
             lastStuckCheckTime = now;
             lastStuckCheckYaw = yaw; antiStuckSpeedBoost = 0;
             currentPhase = TURNING;
@@ -347,23 +372,66 @@ void loop() {
           currentPhase = TURNING;
         }
         break;
-      }
     }
+}
   } else { stopMotors(); }
 
   renderDisplayLink:
   if (now - lastDrawTime > 100) {
-    lastDrawTime = now; M5.Lcd.setCursor(0, 0);
-    if (state == 0) {
-      M5.Lcd.setTextColor(CYAN, BLACK);   M5.Lcd.println("--- WIFI ACTIVE ---");
+    lastDrawTime = now; 
+    
+    if (showSummaryScreen) {
+      if (!summaryScreenCleared) {
+          summaryScreenCleared = true;
+          M5.Lcd.fillScreen(BLACK); 
+      }
+      M5.Lcd.setCursor(0, 0);
+      M5.Lcd.setTextColor(GREEN, BLACK);
+      M5.Lcd.println("=== JOURNEY SUMMARY ===");
       M5.Lcd.setTextColor(WHITE, BLACK);
-      M5.Lcd.printf("IP: %s\n", WiFi.localIP().toString().c_str());
-      M5.Lcd.printf("Steps Loaded: %d\n\n", totalMissionSteps);
-      M5.Lcd.setTextColor(YELLOW, BLACK); M5.Lcd.println("Awaiting Dispatch...");
-    } else {
-      M5.Lcd.setTextColor(GREEN, BLACK);  M5.Lcd.printf("RUNNING LEG: %d/%d\n", activeStepIndex + 1, totalMissionSteps);
+      M5.Lcd.printf("Dist : %d Grids (%.1fm)\n", totalGridsWalked, totalGridsWalked * 0.3f);
+      M5.Lcd.printf("Docks: %d Pitstops ⚡\n", totalChargingStationsCleared);
+      M5.Lcd.printf("Turns: %d Pivot Turns\n", totalPivotTurns);
+      
+      float elapsedSec = (journeyEndTime - journeyStartTime) / 1000.0f; 
+      M5.Lcd.printf("Time : %.1f seconds\n", elapsedSec);
+      float avgSpd = 0.0f;
+      if (elapsedSec > 0.0f) {
+          avgSpd = (totalGridsWalked * 30.0f) / elapsedSec;
+      }
+      M5.Lcd.printf("Spd  : %.1f cm/s\n", avgSpd);
+      M5.Lcd.printf("Steer: %d Adjustments\n", totalSteeringCorrections);
+      M5.Lcd.setTextColor(YELLOW, BLACK);
+      M5.Lcd.println("=======================");
     }
-    M5.Lcd.setTextColor(WHITE, BLACK); M5.Lcd.printf("L:%04d F:%04d R:%04d\n", s_left, s_front, s_right);
+    else {
+      M5.Lcd.setCursor(0, 0);
+      if (routeErrorFlag) {
+          M5.Lcd.fillScreen(RED); 
+          M5.Lcd.setTextColor(WHITE, RED);
+          M5.Lcd.println("===================");
+          M5.Lcd.println("   ROUTE ERROR!    ");
+          M5.Lcd.println(" MAZE INFEASIBLE   ");
+          M5.Lcd.println("===================");
+          routeErrorFlag = false; 
+      }
+      else if (state == 0) {
+        M5.Lcd.setTextColor(CYAN, BLACK);   M5.Lcd.println("--- WIFI ACTIVE ---");
+        M5.Lcd.setTextColor(WHITE, BLACK);
+        M5.Lcd.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+        M5.Lcd.printf("Steps Loaded: %d\n\n", totalMissionSteps);
+        
+        if (WiFi.status() != WL_CONNECTED || !pcConnected) {
+            M5.Lcd.setTextColor(RED, BLACK); M5.Lcd.println("PC: OFFLINE");
+        } else {
+            M5.Lcd.setTextColor(YELLOW, BLACK); M5.Lcd.println("Awaiting Dispatch...");
+        }
+      } else {
+        M5.Lcd.setTextColor(GREEN, BLACK);  M5.Lcd.printf("RUNNING LEG: %d/%d\n", activeStepIndex + 1, totalMissionSteps);
+        M5.Lcd.setTextColor(WHITE, BLACK); M5.Lcd.printf("L:%04d F:%04d R:%04d\n", s_left, s_front, s_right);
+      }
+    }
   }
   delay(2);
 }
+
