@@ -62,7 +62,7 @@ button:hover{filter:brightness(0.9);}
 
 /* Rover animation */
 #rover-anim{position:absolute;pointer-events:none;z-index:20;display:none;transform:translate(-50%,-50%);}
-#rover-live{position:absolute;pointer-events:none;z-index:21;display:none;transform:translate(-50%,-50%);filter:hue-rotate(150deg) saturate(1.4);}
+
 
 /* Bottom bar */
 #path-output{background:var(--bg);border-top:1px solid var(--border);padding:8px 16px;font-size:12px;flex-shrink:0;min-height:44px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
@@ -83,8 +83,13 @@ button:hover{filter:brightness(0.9);}
 .btn-solve:hover{filter:brightness(1.1);}
 .btn-solve:disabled{opacity:0.5;cursor:not-allowed;}
 
-/* Charging glow animation */
-@keyframes chargeGlow{0%,100%{filter:drop-shadow(0 0 4px #00ff88);}50%{filter:drop-shadow(0 0 14px #00ff88) brightness(1.3);}}
+/* Charging glow animation — localized blue glow on the station grid block */
+@keyframes chargeGlowBlue{
+  0%,100%{box-shadow:inset 0 0 8px 2px #3b82f6, 0 0 6px #3b82f6;background:rgba(59,130,246,0.18);}
+  50%{box-shadow:inset 0 0 22px 4px #60a5fa, 0 0 18px #60a5fa;background:rgba(96,165,250,0.32);}
+}
+.cell.charging-glow{animation:chargeGlowBlue 0.7s infinite;z-index:6;}
+@keyframes chargeGlow{0%,100%{filter:drop-shadow(0 0 4px #3b82f6);}50%{filter:drop-shadow(0 0 14px #60a5fa) brightness(1.3);}}
 .rover-charging{animation:chargeGlow 0.6s infinite;}
 
 /* Step counter badge */
@@ -230,7 +235,6 @@ button:hover{filter:brightness(0.9);}
     <div id="maze-container"></div>
     <canvas id="path-canvas"></canvas>
     <div id="rover-anim"></div>
-    <div id="rover-live"></div>
   </div>
 
   <div id="path-output">
@@ -245,10 +249,6 @@ button:hover{filter:brightness(0.9);}
   <button class="theme-btn" style="background:#0f172a;color:#fff;" onclick="setTheme('dark')">Dark</button>
   <button class="theme-btn" style="background:#000;color:#00ff00;border-color:#00ff00" onclick="setTheme('hacker')">Hacker</button>
   <button class="theme-btn" style="background:#2b1055;color:#fcd34d;border-color:#f472b6" onclick="setTheme('neon')">Neon</button>
-  <hr style="border-color:var(--border);margin:4px 0;">
-  <label style="display:block;text-align:center;margin-bottom:4px;">Speed</label>
-  <input type="range" id="anim-speed" min="200" max="1500" value="1000" style="width:100%;">
-
   <hr style="border-color:var(--border);margin:15px 0 10px 0;">
   <button class="theme-btn" style="background:var(--primary);color:#fff;font-weight:bold;border:none;padding:10px;" onclick="resetToEdit()">✎ EDIT GRID</button>
 </div>
@@ -277,11 +277,34 @@ let liveTrackedPath = null;
 let liveStepIdx = -1;
 let liveLegStartMs = 0;
 let liveRAF = null;
-const MS_PER_GRID = 1500;   // your measured 1.5s to cross one grid
-const GRID_MM     = 300;    // corridor width in mm, for L/R lateral scalinglet manualRoute = [];   // ordered list of [r,c] cells for the manual route feature
+const MS_PER_GRID = 1500;     // Baseline pacing: exactly 1.5s per grid advancement
+const GRID_CM     = 30;       // Real-world corridor width in cm
+const ROVER_W_CM  = 9.5;      // Physical rover width in cm
+const ROVER_L_CM  = 11;       // Physical rover length in cm
+const RENDER_SCALE = 1.3;     // UI render scale enlargement factor
+const CENTERLINE_CM = (GRID_CM - ROVER_W_CM) / 2;   // 10.25 cm centered clearance baseline
+const SENSOR_MIN_CM = 4.0;    // Clamp lower bound (rover closest to measured wall)
+const SENSOR_MAX_CM = 24.5;   // Clamp upper bound (rover touching opposite wall)
 let animRunning = false;
 let animCancel = false;
 let runMode = 'mission';
+
+// Real-world rover footprint (cm-based). Vertical (NORTH/SOUTH) uses width=9.5, height=11.
+// Horizontal (EAST/WEST) swaps them. 1.3× render scale applied on top of base cell (cs).
+// Bounding box is guaranteed never to clip side walls because the raw 9.5/11 ratio fits
+// inside the 30cm corridor (max dimension 11/30 of cs, ×1.3 = ~0.477·cs < 1.0·cs).
+function roverDims(dir, cs) {
+  const isVertical = (dir === 'north' || dir === 'south');
+  const w = (isVertical ? (cs * ROVER_W_CM / GRID_CM) : (cs * ROVER_L_CM / GRID_CM)) * RENDER_SCALE;
+  const h = (isVertical ? (cs * ROVER_L_CM / GRID_CM) : (cs * ROVER_W_CM / GRID_CM)) * RENDER_SCALE;
+  return { w, h };
+}
+
+function sizeRoverBox(rv, dir, cs) {
+  const { w, h } = roverDims(dir, cs);
+  rv.style.width  = w + 'px';
+  rv.style.height = h + 'px';
+}
 
 
 async function calibrateM5() {
@@ -526,13 +549,18 @@ function setMode(m) {
 function refreshIcons() {
   document.querySelectorAll('.cell-icon').forEach(el => el.remove());
   if (startCell) {
-    const c = document.getElementById(`cell-${startCell[0]}-${startCell[1]}`);
-    if (c) {
-      const d = document.createElement('div');
-      d.className = 'cell-icon';
-      d.id = 'static-start-rover'; // <-- ADD THIS ID
-      d.innerHTML = roverSVG(robotDirection);
-      c.appendChild(d);
+    // Task 3 ghost-icon guard: skip re-creating the static start rover while
+    // live tracking is active (the live #rover-anim element is the source of
+    // truth). Re-adding a static icon here leaves a stuck ghost behind.
+    if (!isLiveTrackingActive) {
+      const c = document.getElementById(`cell-${startCell[0]}-${startCell[1]}`);
+      if (c) {
+        const d = document.createElement('div');
+        d.className = 'cell-icon';
+        d.id = 'static-start-rover'; // <-- ADD THIS ID
+        d.innerHTML = roverSVG(robotDirection);
+        c.appendChild(d);
+      }
     }
   }
   if (endCell) {
@@ -719,9 +747,8 @@ function hideRover() {
 function placeRoverAt(r, c, dir) {
   const rv = document.getElementById('rover-anim');
   const p = getCellCenter(r, c);
-  const sz = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 64;
-  rv.style.width = sz + 'px';
-  rv.style.height = sz + 'px';
+  const cs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 64;
+  sizeRoverBox(rv, dir, cs);
   rv.style.left = p.x + 'px';
   rv.style.top  = p.y + 'px';
   rv.innerHTML  = roverSVG(dir);
@@ -734,8 +761,9 @@ function animateTo(r, c, dir) {
     const p  = getCellCenter(r, c);
     const startX = parseFloat(rv.style.left) || p.x;
     const startY = parseFloat(rv.style.top)  || p.y;
+    const cs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 64;
 
-    // Smoothly update rotation without destroying the SVG
+    sizeRoverBox(rv, dir, cs);
     const svg = rv.querySelector('svg');
     if (svg) {
       const deg = {north:0, east:90, south:180, west:270}[dir];
@@ -744,8 +772,7 @@ function animateTo(r, c, dir) {
       rv.innerHTML = roverSVG(dir);
     }
 
-    const rawValue = parseInt(document.getElementById('anim-speed').value) || 1000;
-    const speed = 1700 - rawValue; // Flips it: Right = Fast (200ms delay), Left = Slow (1500ms delay)
+    const speed = 500; // static fallback constant for local mock runs
     const t0 = performance.now();
 
     function frame(now) {
@@ -796,6 +823,9 @@ async function animateRover(steps) {
         // 3. If we aren't facing the right way, turn and pause!
         if (targetDir !== currentDir) {
           await sleep(100);
+          const rv = document.getElementById('rover-anim');
+          const cs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 64;
+          sizeRoverBox(rv, targetDir, cs);
           const svg = document.querySelector('#rover-anim svg');
           if (svg) {
             const deg = {north:0, east:90, south:180, west:270}[targetDir];
@@ -1014,6 +1044,14 @@ function applyResponseData(data) {
     if (data.config.battery_capacity && data.config.battery_capacity !== 999999) {
       document.getElementById('battery-cap').value = data.config.battery_capacity;
     }
+    // GRID REGENERATION GUARD: if incoming dimensions differ from the current
+    // physical grid, rebuild the layout BEFORE applying walls/active cells so
+    // the DOM cell/wall elements exist for the mapping below.
+    const newRows = parseInt(data.config.rows) || gridRows;
+    const newCols = parseInt(data.config.columns) || gridCols;
+    if (newRows !== gridRows || newCols !== gridCols) {
+      generateGrid(false);
+    }
   }
   if (data.active_cells) {
     data.active_cells.forEach(c => {
@@ -1086,9 +1124,15 @@ function applyResponseData(data) {
     document.getElementById('path-status').innerHTML = `<span class="status-success">Route feasible — ${cost}/${cap} energy units.</span>`;
   }
 
-  // Draw lines on canvas and trigger local screen rover simulation mechanics
+  // Draw lines on canvas and trigger local screen rover simulation mechanics.
+  // Task 3 ghost-icon guard: do NOT launch the local mock solver animation
+  // when live tracking is active — the live tracker owns #rover-anim. Running
+  // both concurrently causes duplicate/stuck rover icons fighting over the
+  // same element.
   drawPath(steps);
-  animateRover(steps);
+  if (!isLiveTrackingActive) {
+    animateRover(steps);
+  }
 }
 
 
@@ -1194,8 +1238,10 @@ const mazeLibrary = [
 
   
   { name:"Maze 12 — 5×5 Open Grid", data:{"config":{"rows":5,"columns":5,"battery_capacity":10},"start":null,"end":null,"robot_direction":"north","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4],[3,0],[3,1],[3,2],[3,3],[3,4],[4,0],[4,1],[4,2],[4,3],[4,4]],"charging_stations":[],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[2,4],[2,5]]},{"between":[[3,-1],[3,0]]},{"between":[[3,4],[3,5]]},{"between":[[4,-1],[4,0]]},{"between":[[4,4],[4,5]]},{"between":[[4,0],[5,0]]},{"between":[[4,1],[5,1]]},{"between":[[4,2],[5,2]]},{"between":[[4,3],[5,3]]},{"between":[[4,4],[5,4]]}]} },
-  
+
   { name:"Maze 13 — My Room 4×4", data:{"config":{"rows":4,"columns":4,"battery_capacity":3},"start":[0,0],"end":[2,3],"robot_direction":"east","active_cells":[[0,0],[0,1],[0,2],[0,3],[1,0],[1,1],[1,2],[1,3],[2,0],[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3]],"charging_stations":[[0,3],[2,2]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[0,3],[0,4]]},{"between":[[1,-1],[1,0]]},{"between":[[0,3],[1,3]]},{"between":[[1,2],[1,3]]},{"between":[[1,3],[1,4]]},{"between":[[2,-1],[2,0]]},{"between":[[2,2],[2,3]]},{"between":[[2,3],[2,4]]},{"between":[[3,-1],[3,0]]},{"between":[[3,3],[3,4]]},{"between":[[3,0],[4,0]]},{"between":[[3,1],[4,1]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]}]} },
+
+  { name:"Maze 14 — Snail 5×5", data:{"config":{"rows":5,"columns":5,"battery_capacity":4},"start":[0,1],"end":[2,2],"robot_direction":"east","active_cells":[[0,1],[0,2],[0,3],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4],[3,0],[3,1],[3,2],[3,3],[3,4],[4,0],[4,1],[4,2],[4,3]],"charging_stations":[[2,0],[4,0],[3,3],[2,3],[0,3],[2,1]],"walls":[{"between":[[-1,1],[0,1]]},{"between":[[0,0],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[0,2],[0,3]]},{"between":[[0,3],[0,4]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,1],[1,2]]},{"between":[[0,4],[1,4]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[2,2],[2,3]]},{"between":[[2,4],[2,5]]},{"between":[[3,-1],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[3,1],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,4],[3,5]]},{"between":[[4,-1],[4,0]]},{"between":[[3,1],[4,1]]},{"between":[[4,2],[4,3]]},{"between":[[3,4],[4,4]]},{"between":[[4,3],[4,4]]},{"between":[[4,0],[5,0]]},{"between":[[4,1],[5,1]]},{"between":[[4,2],[5,2]]},{"between":[[4,3],[5,3]]}]} },
 
 ];
 
@@ -1353,158 +1399,500 @@ function loadGalleryMaze(data) {
   { name:"Quick Sprint",
     data:{config:{rows:3,columns:5,battery_capacity:6},start:[1,0],end:[1,4],robot_direction:"east",
       active_cells:[[0,2],[1,0],[1,1],[1,2],[1,3],[1,4],[2,2]],charging_stations:[],walls:[]} },
+ */
 
-*/
+
 // ── GLOBAL CLOSED-LOOP TELEMETRY TRACKER ENGINE ──────────────────────
 function yawToDir(yaw) {
-    let a = ((yaw % 360) + 360) % 360;
-    if (a >= 315 || a < 45)  return 'north';
-    if (a < 135)             return 'east';
-    if (a < 225)             return 'south';
-    return 'west';
-  }
+  let a = ((yaw % 360) + 360) % 360;
+  if (a >= 315 || a < 45)  return 'north';
+  if (a < 135)             return 'east';
+  if (a < 225)             return 'south';
+  return 'west';
+}
 
-// Rebuild the server's compressed legs from the per-cell path so telemetry
-  // stepIdx (compressed) maps to the right start/end cells.
-  function buildCompressedLegs(path) {
-    const legs = [];
-    if (!path || path.length < 2) return legs;
-    let i = 0;
-    while (i < path.length - 1) {
-      const r0 = path[i].cell[0], c0 = path[i].cell[1];
-      const dr = Math.sign(path[i+1].cell[0] - r0);
-      const dc = Math.sign(path[i+1].cell[1] - c0);
-      let j = i;
-      while (j < path.length - 1) {
-        const rA = path[j].cell[0],   cA = path[j].cell[1];
-        const rB = path[j+1].cell[0], cB = path[j+1].cell[1];
-        if (Math.sign(rB - rA) === dr && Math.sign(cB - cA) === dc) {
-          j++;
-          if (path[j].type === 'charge') break;
-        } else break;
-      }
-      legs.push({
-        r0, c0,
-        r1: path[j].cell[0], c1: path[j].cell[1],
-        grids: Math.abs(path[j].cell[0] - r0) + Math.abs(path[j].cell[1] - c0),
-        dr, dc
-      });
-      i = j;
+function buildCompressedLegs(path) {
+  const legs = [];
+  if (!path || path.length < 2) return legs;
+  let i = 0;
+  while (i < path.length - 1) {
+    const r0 = path[i].cell[0], c0 = path[i].cell[1];
+    const dr = Math.sign(path[i+1].cell[0] - r0);
+    const dc = Math.sign(path[i+1].cell[1] - c0);
+    let j = i;
+    while (j < path.length - 1) {
+      const rA = path[j].cell[0],   cA = path[j].cell[1];
+      const rB = path[j+1].cell[0], cB = path[j+1].cell[1];
+      if (Math.sign(rB - rA) === dr && Math.sign(cB - cA) === dc) {
+        j++;
+        if (path[j].type === 'charge') break;
+      } else break;
     }
-    return legs;
+    legs.push({
+      r0, c0,
+      r1: path[j].cell[0], c1: path[j].cell[1],
+      grids: Math.abs(path[j].cell[0] - r0) + Math.abs(path[j].cell[1] - c0),
+      dr, dc
+    });
+    i = j;
+  }
+  return legs;
+}
+
+function hideLiveRover() {
+  const rv = document.getElementById('rover-live');
+  if (rv) rv.style.display = 'none';
+  const ra = document.getElementById('rover-anim');
+  if (ra) ra.style.display = 'none';
+}
+
+
+// ── LIVE TRACKER STATE ──────────────────────────────────────────────
+let lastLatFrac = 0;                 // last computed lateral fraction (scalar)
+let frozenPixelX = null;             // pixel X frozen at turn-start (axis pivot)
+let frozenPixelY = null;             // pixel Y frozen at turn-start
+let isTurningNow = false;            // true between TURN STARTED and TURN FINISHED
+let prevTurnState = false;           // edge detector for turn-finished transitions
+let postTurnRealign = false;         // flag: ease lateral from frozen pixel to new offset
+let postTurnRealignStartX = null;    // pixel X at the moment turn finished
+let postTurnRealignStartY = null;
+let lastChargingCell = null;         // tracks which cell currently glows
+let prevDriveStepIdx = -1;           // detects step increments to (re)start 1.5s timer
+let driveLegStartMs = 0;             // timestamp current grid-advance animation began
+let driveLegTargetIdx = -1;          // which leg index we are animating toward
+let isLiveTrackingActive = false;    // active tracking guard (disables liveTick when local sim runs)
+let _lastLoggedIdx = -1;             // diagnostic: last idx logged on STEP transition
+let turnStartedIdx = -1;             // stepIdx at which the current turn began (Task 2 sync)
+let liveTrackedPathId = null;        // content-based path ID to prevent redundant rebuilds
+let lastValidLogicDir = 'north';     // persistent logic direction (decoupled from decorative yaw)
+
+// Convert a wire distance value (mm) to cm with the dual-boundary clamp shield.
+function distMmToClampedCm(rawMm) {
+  let cm = (rawMm === undefined || rawMm === null) ? CENTERLINE_CM : (rawMm / 10);
+  return Math.max(SENSOR_MIN_CM, Math.min(SENSOR_MAX_CM, cm));
+}
+
+function checkWallOnAbsoluteSide(r, c, absDir) {
+  if (r < 0 || r >= gridRows || c < 0 || c >= gridCols) return false;
+  if (absDir === 'north') return document.getElementById(`hwall-${r}-${c}`)?.classList.contains('on');
+  if (absDir === 'south') return document.getElementById(`hwall-${r+1}-${c}`)?.classList.contains('on');
+  if (absDir === 'west')  return document.getElementById(`vwall-${r}-${c}`)?.classList.contains('on');
+  if (absDir === 'east')  return document.getElementById(`vwall-${r}-${c+1}`)?.classList.contains('on');
+  return false;
+}
+
+function drawLiveRover(x, y, dir, cs) {
+  const rv = document.getElementById('rover-anim');
+  sizeRoverBox(rv, dir, cs);
+  rv.style.left   = x + 'px';
+  rv.style.top    = y + 'px';
+  const deg = { north:0, east:90, south:180, west:270 }[dir] || 0;
+  const svg = rv.querySelector('svg');
+  if (svg) svg.style.transform = `rotate(${deg}deg)`;
+  else     rv.innerHTML = roverSVG(dir);
+  rv.style.display = 'block';
+  const staticRover = document.getElementById('static-start-rover');
+  if (staticRover) staticRover.style.display = 'none';
+}
+
+// Apply / clear the localized blue charging glow on a grid block.
+function setChargingGlow(r, c, on) {
+  const cell = document.getElementById(`cell-${r}-${c}`);
+  if (!cell) return;
+  if (on) cell.classList.add('charging-glow');
+  else    cell.classList.remove('charging-glow');
+}
+
+// Eased interpolation (ease-in-out quad).
+function easeInOut(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
+
+// Compute the wall-conditional lateral fraction (latFrac) for a driving cell.
+// Returns a scalar in [-0.5, 0.5] representing offset across one cell pitch.
+function computeWallConditionalLatFrac(cellR, cellC, dir, t) {
+  // Determine absolute left/right wall directions for the current heading.
+  let leftAbsDir = '', rightAbsDir = '';
+  if (dir === 'north') { leftAbsDir = 'west';  rightAbsDir = 'east';  }
+  if (dir === 'east')  { leftAbsDir = 'north'; rightAbsDir = 'south'; }
+  if (dir === 'south') { leftAbsDir = 'east';  rightAbsDir = 'west';  }
+  if (dir === 'west')  { leftAbsDir = 'south'; rightAbsDir = 'north'; }
+
+  let hasLeftWall  = checkWallOnAbsoluteSide(cellR, cellC, leftAbsDir);
+  let hasRightWall = checkWallOnAbsoluteSide(cellR, cellC, rightAbsDir);
+
+  // SCENARIO A (NO SIDE WALLS): force dead-center, ignore sensors.
+  if (!hasLeftWall && !hasRightWall) {
+    return 0;
   }
 
-  function hideLiveRover() {
-    const rv = document.getElementById('rover-live');
-    if (rv) rv.style.display = 'none';
+  // Clamp sensor readings (cm) via the dual-boundary shield.
+  const leftCm  = distMmToClampedCm(t.left);
+  const rightCm = distMmToClampedCm(t.right);
+
+  let shiftCm = 0;
+  if (hasLeftWall && hasRightWall) {
+    // SCENARIO C (TWO SIDE WALLS): prioritize the closer wall reading.
+    // Selects the same sign convention as the matching single-wall branch:
+    //   closer=left  → shiftCm = leftCm - CENTERLINE_CM   (same as left-only)
+    //   closer=right → shiftCm = -(rightCm - CENTERLINE_CM) (same as right-only)
+    shiftCm = (leftCm < rightCm) ? (leftCm - CENTERLINE_CM) : -(rightCm - CENTERLINE_CM);
+  } else if (hasLeftWall) {
+    // SCENARIO B (ONE SIDE WALL — left): offset relative to left wall face.
+    shiftCm = leftCm - CENTERLINE_CM;
+  } else if (hasRightWall) {
+    // SCENARIO B (ONE SIDE WALL — right): offset relative to right wall face.
+    shiftCm = -(rightCm - CENTERLINE_CM);
   }
 
-  function drawLiveRover(x, y, dir, sz) {
-    const rv = document.getElementById('rover-live');
-    rv.style.width  = sz + 'px';
-    rv.style.height = sz + 'px';
-    rv.style.left   = x + 'px';
-    rv.style.top    = y + 'px';
-    const deg = { north:0, east:90, south:180, west:270 }[dir];
-    const svg = rv.querySelector('svg');
-    if (svg) svg.style.transform = `rotate(${deg}deg)`;
-    else     rv.innerHTML = roverSVG(dir);
-    rv.style.display = 'block';
-  }
+  // Clamp shift to keep rover inside corridor (±centerline).
+  shiftCm = Math.max(-CENTERLINE_CM, Math.min(CENTERLINE_CM, shiftCm));
+  return shiftCm / GRID_CM;
+}
 
-  function liveTick() {
-    const t = liveTelem;
-    const running = (t.state === 'RUNNING' || t.state === 'DRIVING');
-    if (!running || !liveLegs.length) {
-      hideLiveRover();
-      liveRAF = requestAnimationFrame(liveTick);
-      return;
-    }
-    let idx = t.stepIdx; if (idx < 0) idx = 0;
-    if (idx >= liveLegs.length) idx = liveLegs.length - 1;
-    const leg = liveLegs[idx];
+function liveTick() {
+  const t = liveTelem;
 
-    // Forward progress along this leg, purely by time (1.5s per grid)
-    const legMs = Math.max(leg.grids, 1) * MS_PER_GRID;
-    const f = Math.min((performance.now() - liveLegStartMs) / legMs, 1);
-    let gr = leg.r0 + (leg.r1 - leg.r0) * f;
-    let gc = leg.c0 + (leg.c1 - leg.c0) * f;
-
-    // Lateral offset from walls: >0 means closer to right wall -> shift right
-    let latFrac = ((t.left - t.right) / 2) / GRID_MM;
-    latFrac = Math.max(-0.45, Math.min(0.45, latFrac));
-    gr += leg.dc  * latFrac;   // rover-right grid vector = (dc, -dr)
-    gc += (-leg.dr) * latFrac;
-
-    // Grid coords -> pixels (uniform pitch = cell + wall)
-    const cs  = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 64;
-    const wsz = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--wall-size')) || 8;
-    const pitch = cs + wsz;
-    const P0 = getCellCenter(leg.r0, leg.c0);
-    const x = P0.x + (gc - leg.c0) * pitch;
-    const y = P0.y + (gr - leg.r0) * pitch;
-
-    const dir = leg.dr < 0 ? 'north' : leg.dr > 0 ? 'south' : leg.dc > 0 ? 'east' : 'west';
-    drawLiveRover(x, y, dir, cs);
+  // STRICT GUARD: bail immediately if live tracking is off or the local
+  // simulation (animateRover) is running, to prevent animation clashes.
+  if (!isLiveTrackingActive || animRunning) {
     liveRAF = requestAnimationFrame(liveTick);
+    return;
   }
 
-  window.updateLiveTrackerUI = function(stepIdx, yaw, left, front, right, stateLabel) {    const stateEl = document.getElementById('tele-state');
-    if (!stateEl) return;
-    stateEl.textContent = stateLabel;
-    document.getElementById('tele-step').textContent = stepIdx >= 0 ? stepIdx : "IDLE";
-    document.getElementById('tele-yaw').textContent = parseFloat(yaw).toFixed(1) + "°";
-    document.getElementById('tele-laser-l').textContent = String(left).padStart(4, '0');
-    document.getElementById('tele-laser-f').textContent = String(front).padStart(4, '0');
-    document.getElementById('tele-laser-r').textContent = String(right).padStart(4, '0');
+  if (!startCell) {
+    hideLiveRover();
+    liveRAF = requestAnimationFrame(liveTick);
+    return;
+  }
 
-liveTelem = { stepIdx: stepIdx, yaw: yaw, left: left, right: right, state: stateLabel };
+  const cs  = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) || 64;
+  const wsz = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--wall-size')) || 8;
+  const pitch = cs + wsz;
 
-    if (stateLabel === "DRIVING" || stateLabel === "RUNNING") {
-      stateEl.className = "status-success";
-      if (currentPath && currentPath !== liveTrackedPath) {
-        liveTrackedPath = currentPath;
-        liveLegs = buildCompressedLegs(currentPath);
-        liveStepIdx = -1;
-      }
-      if (stepIdx !== liveStepIdx) {
-        liveStepIdx = stepIdx;
-        liveLegStartMs = performance.now();
-      }
-    } else if (stateLabel === "PIVOT_TURNING") {
-      stateEl.className = "status-warn";
+  let idx = t.stepIdx; if (idx < 0) idx = 0;
+  const running = (t.state === 'RUNNING' || t.state === 'DRIVING');
+  const turning = (t.state && (t.state.includes("TURN") || t.state === "PIVOT_TURNING" || t.state.includes("VERIFY")));
+  const charging = (t.state === 'CHARGING');
+
+  // ── COMPRESSED LEG MAPPING (map stepIdx directly to liveLegs) ────
+  // The injector's stepIdx is a per-STEP index (one idx per multi-grid run),
+  // which matches liveLegs' indexing (one entry per compressed segment).
+  // Bounds-clamp idx so a stale/advanced packet can never grab a wrong leg.
+  if (idx >= liveLegs.length) idx = liveLegs.length - 1;
+  let leg = liveLegs[idx];
+  if (!leg) {
+    leg = { r0: startCell[0], c0: startCell[1], r1: startCell[0], c1: startCell[1], grids: 1, dr: 0, dc: 0 };
+  }
+
+  // DIAGNOSTIC LOG on STEP transition (Task 1 trace): confirms idx↔leg mapping.
+  if (idx !== _lastLoggedIdx) {
+    _lastLoggedIdx = idx;
+    console.log('[liveTick] STEP', idx, '| leg.r0/c0=', leg.r0 + ',' + leg.c0,
+                '-> r1/c1=', leg.r1 + ',' + leg.c1, '| grids=', leg.grids,
+                '| state=', t.state, '| yaw=', t.yaw);
+  }
+
+  // Determine LOGIC direction from the compressed leg vectors — NOT from yaw.
+  // Yaw is purely decorative; logicDir drives wall lookups and lateral math.
+  let logicDir = lastValidLogicDir;
+  if (leg.dr !== 0 || leg.dc !== 0) {
+    logicDir = leg.dr < 0 ? 'north' : leg.dr > 0 ? 'south' : leg.dc > 0 ? 'east' : 'west';
+    lastValidLogicDir = logicDir;
+  }
+  // Visual direction (for SVG rotation only) — derived from yaw, never used in logic.
+  const visualYawDir = yawToDir(((t.yaw || 0) % 360 + 360) % 360);
+
+  // ── EDGE DETECT TURN START / TURN FINISHED (Task 2 sync guard) ────
+  // Track the stepIdx at which the turn began so the turn can ONLY end when
+  // the state is genuinely non-turning AND stepIdx has advanced past the turn
+  // step. This prevents a stale/out-of-order packet from prematurely ending
+  // the pivot spin before the backend's TURN_MS completes.
+  if (turning && !isTurningNow) {
+    // TURN STARTED: freeze the current on-screen pixel position (NOT latFrac).
+    const rv = document.getElementById('rover-anim');
+    if (rv && rv.style.display === 'block') {
+      frozenPixelX = parseFloat(rv.style.left);
+      frozenPixelY = parseFloat(rv.style.top);
     } else {
-      stateEl.className = "status-warn";
+      const P0 = getCellCenter(startCell[0], startCell[1]);
+      frozenPixelX = P0.x;
+      frozenPixelY = P0.y;
     }
-  };
+    isTurningNow = true;
+    turnStartedIdx = idx;     // record which step the turn began on
+    console.log('[liveTick] TURN STARTED at idx=', idx, '| frozen pixel=', frozenPixelX + ',' + frozenPixelY);
+  }
+  // TURN FINISHED guard: only end the turn when turning is false AND the
+  // stepIdx has advanced beyond the turn's step (or state is a genuine
+  // forward/charging state). A stale packet with the OLD stepIdx and a
+  // non-turning state must NOT end the turn.
+  if (!turning && isTurningNow && (idx > turnStartedIdx || running || charging)) {
+    // TURN FINISHED: begin post-turn realignment glide from frozen pixel.
+    isTurningNow = false;
+    postTurnRealign = true;
+    const rv = document.getElementById('rover-anim');
+    if (rv && rv.style.display === 'block') {
+      postTurnRealignStartX = parseFloat(rv.style.left);
+      postTurnRealignStartY = parseFloat(rv.style.top);
+    } else {
+      postTurnRealignStartX = frozenPixelX;
+      postTurnRealignStartY = frozenPixelY;
+    }
+    console.log('[liveTick] TURN FINISHED at idx=', idx, '| realign from pixel=', postTurnRealignStartX + ',' + postTurnRealignStartY);
+  }
 
-// ── INITIALIZE AUTOMATIC BACKGROUND WI-FI POLLING LOOP ─────────────
-  function startGlobalTelemetryPoller() {
-    setInterval(async () => {
-      try {
-        const res = await fetch('http://localhost:8085/get_telemetry');
-        if (res.ok) {
-          const t = await res.json();
-          if (window.updateLiveTrackerUI && t.state) {
-            window.updateLiveTrackerUI(t.stepIdx, t.yaw, t.left, t.front, t.right, t.state);
+  // ── CHARGING GLOW MANAGEMENT (anchored on the current leg base cell) ──
+  if (charging) {
+    let cr = Math.round(leg.r1), cc = Math.round(leg.c1);
+    if (lastChargingCell !== `${cr},${cc}`) {
+      if (lastChargingCell) {
+        let [pr, pc] = lastChargingCell.split(',').map(Number);
+        setChargingGlow(pr, pc, false);
+      }
+      setChargingGlow(cr, cc, true);
+      lastChargingCell = `${cr},${cc}`;
+    }
+  } else if (lastChargingCell) {
+    let [pr, pc] = lastChargingCell.split(',').map(Number); setChargingGlow(pr, pc, false); lastChargingCell = null;
+  }
+
+  // ── AXIS PIVOT TURN: hold frozen pixel, only rotate ──────────────
+  if (isTurningNow) {
+    if (frozenPixelX !== null && frozenPixelY !== null) {
+      drawLiveRover(frozenPixelX, frozenPixelY, visualYawDir, cs);
+    }
+    liveRAF = requestAnimationFrame(liveTick);
+    return;
+  }
+
+  // ── FORWARD POSITION WITH COMPRESSED-LEG INTERPOLATION ───────────
+  // Telemetry-driven pacing: the raw telemetry packets drive the intermediate
+  // step position. A fixed 1500ms baseline pacing scale is multiplied by the
+  // number of grids in the compressed segment to get the total leg duration.
+
+  // Step-increment edge detect: (re)start the animation timer on new idx.
+  if (running && idx !== prevDriveStepIdx) {
+    prevDriveStepIdx = idx;
+    driveLegStartMs = performance.now();
+    driveLegTargetIdx = idx;
+  }
+
+  // Calculate progressFrac smoothly across the entire compressed segment.
+  let elapsed = performance.now() - driveLegStartMs;
+  let totalLegDuration = leg.grids * 1500;
+  let progressFrac = running ? Math.min(elapsed / totalLegDuration, 1) : 1;
+
+  // STOP-AND-WAIT SAFEGUARD: if totalLegDuration completed but no new step
+  // index yet, rover stays parked at the end of the leg (progressFrac=1).
+
+  // Linearly interpolate the forward coordinates along the entire multi-grid leg.
+  let dispR = leg.r0 + (leg.r1 - leg.r0) * easeInOut(progressFrac);
+  let dispC = leg.c0 + (leg.c1 - leg.c0) * easeInOut(progressFrac);
+
+  // Determine the cell the rover is currently traversing from its real-time
+  // interpolated position so wall lookups change dynamically down long corridors.
+  const travCellR = Math.round(dispR);
+  const travCellC = Math.round(dispC);
+
+  // Lateral offset (latFrac) — wall-conditional on the traversed cell.
+  // Uses logicDir (movement vector), NOT visualYawDir.
+  let latFrac = charging ? lastLatFrac : computeWallConditionalLatFrac(travCellR, travCellC, logicDir, t);
+  lastLatFrac = latFrac;
+
+  // Apply lateral offset PERPENDICULAR to the heading direction.
+  // Vertical travel (north/south) → lateral shifts the COLUMN axis (dispC).
+  // Horizontal travel (east/west) → lateral shifts the ROW axis (dispR).
+  if (logicDir === 'north') dispC += latFrac;
+  if (logicDir === 'south') dispC -= latFrac;
+  if (logicDir === 'east')  dispR += latFrac;
+  if (logicDir === 'west')  dispR -= latFrac;
+
+  // Convert grid coords -> absolute pixels anchored on start cell.
+  const P0 = getCellCenter(startCell[0], startCell[1]);
+  let x = P0.x + (dispC - startCell[1]) * pitch;
+  let y = P0.y + (dispR - startCell[0]) * pitch;
+
+  // ── POST-TURN REALIGNMENT GLIDE ──────────────────────────────────
+  // Smoothly ease from the frozen pixel position to the new wall-conditional
+  // lateral offset over the course of the first step forward. Fixed 1500ms
+  // baseline pacing — no slider reference.
+  if (postTurnRealign && running) {
+    let elapsed = performance.now() - driveLegStartMs;
+    let rf = Math.min(elapsed / 1500, 1);
+    const e = easeInOut(rf);
+    if (postTurnRealignStartX !== null && postTurnRealignStartY !== null) {
+      x = postTurnRealignStartX + (x - postTurnRealignStartX) * e;
+      y = postTurnRealignStartY + (y - postTurnRealignStartY) * e;
+    }
+    if (rf >= 1) {
+      postTurnRealign = false;
+      postTurnRealignStartX = null;
+      postTurnRealignStartY = null;
+    }
+  }
+
+  drawLiveRover(x, y, visualYawDir, cs);
+  liveRAF = requestAnimationFrame(liveTick);
+}
+
+// Consolidated Master Interface Callback (Duplicate loop fully purged)
+window.updateLiveTrackerUI = function(stepIdx, yaw, left, front, right, stateLabel) {
+  const stateEl = document.getElementById('tele-state');
+  if (!stateEl) return;
+  stateEl.textContent = stateLabel;
+  document.getElementById('tele-step').textContent = stepIdx >= 0 ? stepIdx : "IDLE";
+  document.getElementById('tele-yaw').textContent = parseFloat(yaw).toFixed(1) + "°";
+  document.getElementById('tele-laser-l').textContent = String(left).padStart(4, '0');
+  document.getElementById('tele-laser-f').textContent = String(front).padStart(4, '0');
+  document.getElementById('tele-laser-r').textContent = String(right).padStart(4, '0');
+
+  liveTelem = { stepIdx: parseInt(stepIdx), yaw: parseFloat(yaw), left: parseInt(left), front: parseInt(front), right: parseInt(right), state: stateLabel };
+
+  // Use a string ID based on path length and end-cell to prevent redundant re-processing
+  const newPathId = currentPath ? `${currentPath.length}:${JSON.stringify(currentPath[currentPath.length - 1].cell)}` : null;
+
+  if (currentPath && newPathId !== liveTrackedPathId) {
+    liveTrackedPathId = newPathId;
+    liveLegs = [];
+
+    try {
+      let xhr = new XMLHttpRequest();
+      xhr.open("GET", "http://localhost:8085/get_instructions", false);
+      xhr.send();
+      if (xhr.status === 200) {
+        let lines = xhr.responseText.trim().split("\n");
+        let currentCellPtr = 0;
+
+        for (let line of lines) {
+          if (line.startsWith("STEP:")) {
+            let parts = line.split(":")[1].split(",");
+            let stepIdx = parseInt(parts[0]);
+            let orient = parseInt(parts[1]);
+            let grids = parseInt(parts[2]);
+
+            if (currentCellPtr < currentPath.length) {
+              let startNode = currentPath[currentCellPtr];
+              let endNode = currentPath[Math.min(currentCellPtr + grids, currentPath.length - 1)];
+
+              let dr = 0, dc = 0;
+              if (orient === 0) dr = -1;
+              if (orient === 1) dc = 1;
+              if (orient === 2) dr = 1;
+              if (orient === 3) dc = -1;
+
+              liveLegs.push({
+                r0: startNode.cell[0],
+                c0: startNode.cell[1],
+                r1: endNode.cell[0],
+                c1: endNode.cell[1],
+                grids: grids,
+                dr: dr,
+                dc: dc
+              });
+
+              currentCellPtr += grids;
+            }
           }
         }
-      } catch (err) {
-        const stateEl = document.getElementById('tele-state');
-        if (stateEl) {
-          stateEl.textContent = "OFFLINE";
-          stateEl.className = "status-danger";
-        }
       }
-    }, 200);
+    } catch (e) {
+      console.error("Failed to synchronize backend leg boundaries:", e);
+    }
+
+    liveStepIdx = -1;
+    prevDriveStepIdx = -1;
+    driveLegStartMs = 0;
   }
 
-  window.onload = () => {
-    generateGrid(true);
-    startGlobalTelemetryPoller();
-    liveRAF = requestAnimationFrame(liveTick);
-  };
-  window.addEventListener('resize', () => { calculateScaling(); if(currentPath) drawPath(currentPath); });
+  // ── ACTIVE TRACKING GUARD + INTERFERENCE PREVENTION ─────────────
+  if (stateLabel === "DRIVING" || stateLabel === "RUNNING" ||
+          stateLabel === "PIVOT_TURNING" || stateLabel === "CHARGING") {
+    // Only clear/hide on the actual inactive→active transition — NOT on
+    // every poll tick. Calling hideRover() every tick nulls out
+    // rover-anim's display right before a turn-start edge can read it,
+    // causing the turn-freeze to fall back to the grid origin instead of
+    // the rover's actual current position.
+    if (!isLiveTrackingActive) {
+      animCancel = true;
+      animRunning = false;
+      hideRover();
+    }
+    isLiveTrackingActive = true;
+    if (currentPath) drawPath(currentPath);
+    const staticRover = document.getElementById('static-start-rover');
+    if (staticRover) staticRover.style.display = 'none';
+  } else if (stateLabel === "IDLE" || stateLabel === "OFFLINE") {
+    isLiveTrackingActive = false;
+    hideLiveRover();
+    const staticRover = document.getElementById('static-start-rover');
+    if (staticRover) staticRover.style.display = 'block';
+  }
+
+  if (stateLabel === "DRIVING" || stateLabel === "RUNNING") {
+    stateEl.className = "status-success";
+    // EARLY-MESSAGE CATCH-UP / step increment:
+    // When a new step index arrives, restart the 1.5s timer. If the previous
+    // step was still animating (early message), liveTick will glide the
+    // remaining distance because the new step anchors on currentPath.
+    if (stepIdx !== liveStepIdx) {
+      liveStepIdx = stepIdx;
+      driveLegStartMs = performance.now();
+      driveLegTargetIdx = stepIdx;
+    }
+  } else {
+    stateEl.className = "status-warn";
+    if (stepIdx !== liveStepIdx) {
+      liveStepIdx = stepIdx;
+    }
+    // STOP-AND-WAIT: when not driving, the rover parks at the end of the
+    // current cell. liveTick keeps progressFrac pinned at 1.
+  }
+};
+
+// ── INITIALIZE AUTOMATIC BACKGROUND WI-FI POLLING LOOP ─────────────
+function startGlobalTelemetryPoller() {
+  setInterval(async () => {
+    try {
+      const res = await fetch('http://localhost:8085/get_telemetry');
+      if (res.ok) {
+        const t = await res.json();
+        if (window.updateLiveTrackerUI && t.state) {
+          window.updateLiveTrackerUI(t.stepIdx, t.yaw, t.left, t.front, t.right, t.state);
+
+          // AUTO-SYNC COUPLER: If the server reports the journey is running but the local window has no path data,
+          // pull down the active configuration background array and force-render the canvas traces instantly!
+          if ((t.state === "RUNNING" || t.state === "DRIVING") && !currentPath) {
+            try {
+              const mRes = await fetch('http://localhost:8085/get_maze');
+              if (mRes.ok) {
+                const mData = await mRes.json();
+                if (mData.start) {
+                  const sRes = await fetch('http://localhost:8085/solve', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify(mData)
+                  });
+                  if (sRes.ok) {
+                    const sData = await sRes.json();
+                    applyResponseData(sRes.ok ? sData : mData);
+                  }
+                }
+              }
+            } catch (mazeErr) { console.error("Background path reconstruction drop cached:", mazeErr); }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Telemetry polling loop encounter error:", err);
+    }
+  }, 500); // Properly closes the setInterval timer block
+} // Properly closes function startGlobalTelemetryPoller()
+
+window.onload = () => {
+  generateGrid(true);
+  startGlobalTelemetryPoller();
+  liveRAF = requestAnimationFrame(liveTick);
+};
+window.addEventListener('resize', () => { calculateScaling(); if(currentPath) drawPath(currentPath); });
 </script>
 </body>
 </html>
