@@ -16,9 +16,9 @@ bool isAwaitingChargeDoneAck        = false;
 
 String inputBuffer = "";
 
+///#GEMINI: INTERCEPT OVERWRITE PARAMETER REGISTER ENTRIES
 bool continuousWhiteMode       = false;
 bool batteryIndicatorActive    = false;
-bool routeErrorActive          = false; // Added error flag register
 int currentGreenLedsCount      = 0;
 
 extern void initLED();
@@ -58,13 +58,11 @@ void loop() {
             M5Serial.println("NOTIFY:CHARGE_DONE");
         }
     } 
-    // Guard against breathing overrides when a path routing error is raised
-    else if (routeErrorActive) {
-        setRingColor(255, 0, 0); // Force Solid Red Ring
-    }
+    ///#GEMINI: Guard white mode configurations against breathing overwrites
     else if (continuousWhiteMode) {
         setRingColor(150, 150, 150);
     }
+    ///#GEMINI: Guard battery indicator rings against breathing overwrites
     else if (batteryIndicatorActive) {
         clearRing();
         for (int i = 0; i < currentGreenLedsCount; i++) {
@@ -131,33 +129,20 @@ void parsePacket(String inLine) {
         isAwaitingChargeDoneAck = true;
         notifyResendTime = 0;
     }
-    // Added Command ID 5 processing logic
-    else if (cmdId == CMD_RED_LED_RING) {
-        if (p1 == 1) {
-            routeErrorActive = true;
-            continuousWhiteMode = false;
-            batteryIndicatorActive = false;
-            setRingColor(255, 0, 0);
-        } else {
-            routeErrorActive = false;
-        }
-    }
+    ///#GEMINI: Mode specific ring formatting parser block
     else if (cmdId == CMD_BATTERY_UPDATE) {
         if (p1 == 255 && p2 == 255) {
             continuousWhiteMode    = true;
             batteryIndicatorActive = false;
-            routeErrorActive       = false;
-            setRingColor(150, 150, 150);
+            setRingColor(150, 150, 150); // Set ring solid white
         } 
         else if (p1 == 0 && p2 == 0) {
             continuousWhiteMode    = false;
             batteryIndicatorActive = false;
-            routeErrorActive       = false; // Clear down constraints on reset
-            lastOrangeUpdateTime   = millis(); 
+            lastOrangeUpdateTime   = millis(); // Release overrides back to breathing
         }
         else if (p2 > 0) {
             continuousWhiteMode    = false;
-            routeErrorActive       = false;
             batteryIndicatorActive = true;
             currentGreenLedsCount  = (p1 * TOTAL_NUM_PIXELS) / p2;
             currentGreenLedsCount  = constrain(currentGreenLedsCount, 0, TOTAL_NUM_PIXELS);
