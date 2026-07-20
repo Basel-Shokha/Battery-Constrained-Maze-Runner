@@ -99,6 +99,73 @@ button:hover{filter:brightness(0.9);}
 #m5-calibrate-side:hover rect{fill:#f97316;filter:drop-shadow(0 0 5px #facc15);}
 #m5-calibrate-side.calibrating rect{fill:#facc15;filter:drop-shadow(0 0 8px #facc15);transform:translateX(-2px);}
 
+#gallery-box {
+  max-height: 92vh;
+}
+.gallery-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--primary);
+  letter-spacing: 1px;
+  margin: 15px 18px 5px 18px;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--border);
+}
+.kinematic-list {
+  padding: 0 18px 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.kcard {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.kcard-info {
+  flex: 1;
+}
+.kcard-title {
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.kcard-desc {
+  font-size: 11px;
+  opacity: 0.75;
+  line-height: 1.4;
+}
+.gallery-footer-link {
+  margin: auto 18px 16px 18px;
+  padding: 10px;
+  background: linear-gradient(135deg, #22c55e, #15803d);
+  color: #fff;
+  text-align: center;
+  text-decoration: none;
+  font-weight: bold;
+  font-size: 11px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.gallery-footer-link:hover {
+  filter: brightness(1.1);
+}
+.mcard-vid-btn {
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  color: #fff;
+  border: none;
+  font-size: 10px;
+  border-radius: 3px;
+}
+
 /* ── Manual Route ─────────────────────────────────────────── */
 .btn-route{background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;border:none;padding:6px 14px;font-size:12px;}
 .btn-route:hover{filter:brightness(1.1);}
@@ -250,7 +317,13 @@ button:hover{filter:brightness(0.9);}
   <button class="theme-btn" style="background:#000;color:#00ff00;border-color:#00ff00" onclick="setTheme('hacker')">Hacker</button>
   <button class="theme-btn" style="background:#2b1055;color:#fcd34d;border-color:#f472b6" onclick="setTheme('neon')">Neon</button>
   <hr style="border-color:var(--border);margin:15px 0 10px 0;">
-  <button class="theme-btn" style="background:var(--primary);color:#fff;font-weight:bold;border:none;padding:10px;" onclick="resetToEdit()">✎ EDIT GRID</button>
+  
+  <div id="journey-log-card" style="margin-top:5px; background:#0a0f0a; border:1px solid var(--border); border-radius:4px; padding:8px; font-family:monospace; color:#00e676; display:flex; flex-direction:column; gap:4px;">
+    <div style="color:#22d3ee; font-weight:bold; font-size:10px; border-bottom:1px solid #14532d; padding-bottom:3px; text-align:center;">📊 RUN ANALYTICS LOG</div>
+    <div id="journey-log-body" style="opacity:0.6; line-height:1.35; font-size:9px; color:#a7f3d0;">
+      No journey completed yet. Run a maze to view telemetry log.
+    </div>
+  </div>
 </div>
 
 <div id="gallery-overlay" onclick="if(event.target===this)closeGallery()">
@@ -866,6 +939,7 @@ async function animateRover(steps) {
     if (step.type === 'destination') {
       document.getElementById('path-status').innerHTML =
               `<span class="status-success">🏁 Destination reached! Mission complete.</span>`;
+      updateRunAnalyticsLog({});
     }
   }
 
@@ -1211,38 +1285,50 @@ function resetToEdit() {
 }
 
 const mazeLibrary = [
-
-  { name:"Maze 01 — 3×5 Full Grid", data:{"config":{"rows":3,"columns":5,"battery_capacity":6},"start":[1,0],"end":[1,4],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4]],"charging_stations":[[0,0],[2,0],[0,3]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[0,2],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[1,1],[1,2]]},{"between":[[1,2],[1,3]]},{"between":[[1,3],[1,4]]},{"between":[[1,4],[1,5]]},{"between":[[1,0],[2,0]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[1,4],[2,4]]},{"between":[[2,4],[2,5]]},{"between":[[2,0],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[2,4],[3,4]]}]} },
-
-  { name:"Maze 02 — 3×5 Low Battery", data:{"config":{"rows":3,"columns":5,"battery_capacity":3},"start":[2,0],"end":[1,2],"robot_direction":"south","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4]],"charging_stations":[[2,4],[0,4],[1,4],[0,1]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[0,2],[1,2]]},{"between":[[1,1],[1,2]]},{"between":[[1,2],[1,3]]},{"between":[[0,4],[1,4]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[2,0],[2,1]]},{"between":[[1,4],[2,4]]},{"between":[[2,4],[2,5]]},{"between":[[2,0],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[2,4],[3,4]]}]} },
-
-  { name:"Maze 03 — 6×6 Complex", data:{"config":{"rows":6,"columns":6,"battery_capacity":6},"start":[0,0],"end":[5,3],"robot_direction":"north","active_cells":[[0,0],[0,1],[1,0],[1,1],[2,0],[2,1],[3,0],[3,1],[3,2],[3,3],[3,4],[3,5],[4,0],[4,1],[4,2],[4,3],[4,4],[4,5],[5,0],[5,1],[5,3],[5,4],[5,5]],"charging_stations":[[1,0],[5,0],[3,4]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[0,1],[0,2]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[1,1],[1,2]]},{"between":[[1,0],[2,0]]},{"between":[[2,-1],[2,0]]},{"between":[[2,1],[2,2]]},{"between":[[2,0],[3,0]]},{"between":[[3,-1],[3,0]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[3,2],[3,3]]},{"between":[[2,4],[3,4]]},{"between":[[2,5],[3,5]]},{"between":[[3,5],[3,6]]},{"between":[[3,0],[4,0]]},{"between":[[4,-1],[4,0]]},{"between":[[3,2],[4,2]]},{"between":[[3,4],[4,4]]},{"between":[[4,3],[4,4]]},{"between":[[4,4],[4,5]]},{"between":[[4,5],[4,6]]},{"between":[[4,0],[5,0]]},{"between":[[5,-1],[5,0]]},{"between":[[4,2],[5,2]]},{"between":[[5,1],[5,2]]},{"between":[[4,3],[5,3]]},{"between":[[5,2],[5,3]]},{"between":[[4,4],[5,4]]},{"between":[[5,5],[5,6]]},{"between":[[5,0],[6,0]]},{"between":[[5,1],[6,1]]},{"between":[[5,3],[6,3]]},{"between":[[5,4],[6,4]]},{"between":[[5,5],[6,5]]}]} },
-
-  { name:"Maze 04 — 4×5 Sparse", data:{"config":{"rows":4,"columns":5,"battery_capacity":10},"start":[0,0],"end":[3,2],"robot_direction":"east","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,1],[1,2],[1,3],[1,4],[2,1],[2,2],[2,3],[2,4],[3,2],[3,3]],"charging_stations":[[2,2]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[0,0],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[0,2],[1,2]]},{"between":[[0,3],[1,3]]},{"between":[[1,4],[1,5]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[1,4],[2,4]]},{"between":[[2,3],[2,4]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[3,1],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]}]} },
-
-  { name:"Maze 05 — 4×5 Adjacent", data:{"config":{"rows":4,"columns":5,"battery_capacity":10},"start":[0,0],"end":[1,0],"robot_direction":"east","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3]],"charging_stations":[[2,2]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[0,2],[1,2]]},{"between":[[0,3],[1,3]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[1,4],[2,4]]},{"between":[[2,3],[2,4]]},{"between":[[3,-1],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,0],[4,0]]},{"between":[[3,1],[4,1]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]}]} },
-
-  { name:"Maze 06 — 1×7 Corridor", data:{"config":{"rows":1,"columns":7,"battery_capacity":2},"start":[0,1],"end":[0,4],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[0,5],[0,6]],"charging_stations":[[0,2],[0,3]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[-1,5],[0,5]]},{"between":[[-1,6],[0,6]]},{"between":[[0,6],[0,7]]},{"between":[[0,0],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[0,2],[1,2]]},{"between":[[0,3],[1,3]]},{"between":[[0,4],[1,4]]},{"between":[[0,5],[1,5]]},{"between":[[0,6],[1,6]]}]} },
-
-  { name:"Maze 07 — 3×3 Dense Charge", data:{"config":{"rows":3,"columns":3,"battery_capacity":1},"start":[0,2],"end":[2,2],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]],"charging_stations":[[0,1],[1,0],[0,0],[2,0],[2,1]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[0,2],[0,3]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[1,1],[1,2]]},{"between":[[1,2],[1,3]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[2,2],[2,3]]},{"between":[[2,0],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]}]} },
-
-{ name:"Maze 08 — 6×6 Long Path", data:{"config":{"rows":6,"columns":6,"battery_capacity":3},"start":[0,0],"end":[0,5],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[0,5],[1,1],[1,2],[1,3],[1,4],[2,1],[2,2],[2,3],[2,4],[3,1],[3,2],[3,3],[3,4],[4,1],[4,2],[4,3],[4,4],[5,1],[5,2],[5,3],[5,4]],"charging_stations":[[2,1],[5,1],[5,4],[3,4],[1,4]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[-1,5],[0,5]]},{"between":[[0,5],[0,6]]},{"between":[[0,0],[1,0]]},{"between":[[1,0],[1,1]]},{"between":[[0,5],[1,5]]},{"between":[[1,4],[1,5]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[2,1],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[2,3],[2,4]]},{"between":[[2,4],[2,5]]},{"between":[[3,0],[3,1]]},{"between":[[3,1],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,4],[3,5]]},{"between":[[4,0],[4,1]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]},{"between":[[4,4],[4,5]]},{"between":[[5,0],[5,1]]},{"between":[[5,4],[5,5]]},{"between":[[5,1],[6,1]]},{"between":[[5,2],[6,2]]},{"between":[[5,3],[6,3]]},{"between":[[5,4],[6,4]]}]} },
-
-
-  { name:"Maze 09 — 4×4 Unreachable", data:{"config":{"rows":4,"columns":4,"battery_capacity":2147483647},"start":[0,0],"end":[3,0],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[1,0],[1,1],[1,2],[1,3],[2,0],[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3]],"charging_stations":[],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[0,2],[0,3]]},{"between":[[0,3],[0,4]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[0,3],[1,3]]},{"between":[[1,3],[1,4]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[2,0],[2,1]]},{"between":[[2,1],[2,2]]},{"between":[[2,3],[2,4]]},{"between":[[2,0],[3,0]]},{"between":[[3,-1],[3,0]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[3,3],[3,4]]},{"between":[[3,0],[4,0]]},{"between":[[3,1],[4,1]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]}]} },
-
-
-  { name:"Maze 10 — 2×5 Insufficient Charge", data:{"config":{"rows":2,"columns":5,"battery_capacity":2},"start":[0,0],"end":[0,4],"robot_direction":"west","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4]],"charging_stations":[[1,4],[1,0],[0,3],[1,3]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[1,4],[1,5]]},{"between":[[1,0],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[1,4],[2,4]]}]} },
-
-  { name:"Maze 11 — 5×5 Full Grid", data:{"config":{"rows":5,"columns":5,"battery_capacity":2},"start":[0,0],"end":[4,4],"robot_direction":"north","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4],[3,0],[3,1],[3,2],[3,3],[3,4],[4,0],[4,1],[4,2],[4,3],[4,4]],"charging_stations":[[3,3],[1,1],[3,1],[4,2],[0,2]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[1,2],[2,2]]},{"between":[[2,4],[2,5]]},{"between":[[3,-1],[3,0]]},{"between":[[3,1],[3,2]]},{"between":[[3,4],[3,5]]},{"between":[[4,-1],[4,0]]},{"between":[[4,2],[4,3]]},{"between":[[4,4],[4,5]]},{"between":[[4,0],[5,0]]},{"between":[[4,1],[5,1]]},{"between":[[4,2],[5,2]]},{"between":[[4,3],[5,3]]},{"between":[[4,4],[5,4]]}]} },
-
-  
-  { name:"Maze 12 — 5×5 Open Grid", data:{"config":{"rows":5,"columns":5,"battery_capacity":10},"start":null,"end":null,"robot_direction":"north","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4],[3,0],[3,1],[3,2],[3,3],[3,4],[4,0],[4,1],[4,2],[4,3],[4,4]],"charging_stations":[],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[2,4],[2,5]]},{"between":[[3,-1],[3,0]]},{"between":[[3,4],[3,5]]},{"between":[[4,-1],[4,0]]},{"between":[[4,4],[4,5]]},{"between":[[4,0],[5,0]]},{"between":[[4,1],[5,1]]},{"between":[[4,2],[5,2]]},{"between":[[4,3],[5,3]]},{"between":[[4,4],[5,4]]}]} },
-
-  { name:"Maze 13 — My Room 4×4", data:{"config":{"rows":4,"columns":4,"battery_capacity":3},"start":[0,0],"end":[2,3],"robot_direction":"east","active_cells":[[0,0],[0,1],[0,2],[0,3],[1,0],[1,1],[1,2],[1,3],[2,0],[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3]],"charging_stations":[[0,3],[2,2]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[0,3],[0,4]]},{"between":[[1,-1],[1,0]]},{"between":[[0,3],[1,3]]},{"between":[[1,2],[1,3]]},{"between":[[1,3],[1,4]]},{"between":[[2,-1],[2,0]]},{"between":[[2,2],[2,3]]},{"between":[[2,3],[2,4]]},{"between":[[3,-1],[3,0]]},{"between":[[3,3],[3,4]]},{"between":[[3,0],[4,0]]},{"between":[[3,1],[4,1]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]}]} },
-
-  { name:"Maze 14 — Snail 5×5", data:{"config":{"rows":5,"columns":5,"battery_capacity":4},"start":[0,1],"end":[2,2],"robot_direction":"east","active_cells":[[0,1],[0,2],[0,3],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4],[3,0],[3,1],[3,2],[3,3],[3,4],[4,0],[4,1],[4,2],[4,3]],"charging_stations":[[2,0],[4,0],[3,3],[2,3],[0,3],[2,1]],"walls":[{"between":[[-1,1],[0,1]]},{"between":[[0,0],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[0,2],[0,3]]},{"between":[[0,3],[0,4]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,1],[1,2]]},{"between":[[0,4],[1,4]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[2,2],[2,3]]},{"between":[[2,4],[2,5]]},{"between":[[3,-1],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[3,1],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,4],[3,5]]},{"between":[[4,-1],[4,0]]},{"between":[[3,1],[4,1]]},{"between":[[4,2],[4,3]]},{"between":[[3,4],[4,4]]},{"between":[[4,3],[4,4]]},{"between":[[4,0],[5,0]]},{"between":[[4,1],[5,1]]},{"between":[[4,2],[5,2]]},{"between":[[4,3],[5,3]]}]} },
-
+  {
+    name: "Maze 01 — The Secret-Corner Bypass",
+    video: "Maze1.mp4",
+    driveLink: "https://drive.google.com/file/d/12OdyKDQi8fxgCgM5mOo0d_mXj2FdqaUs/view?usp=drive_link",
+    data: {"config":{"rows":3,"columns":5,"battery_capacity":6},"start":[1,0],"end":[1,4],"robot_direction":"east","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4]],"charging_stations":[[0,0],[2,0],[0,3]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[0,2],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[1,1],[1,2]]},{"between":[[1,2],[1,3]]},{"between":[[1,3],[1,4]]},{"between":[[1,4],[1,5]]},{"between":[[1,0],[2,0]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[1,4],[2,4]]},{"between":[[2,4],[2,5]]},{"between":[[2,0],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[2,4],[3,4]]}]}
+  },
+  {
+    name: "Maze 02 — The Rapid S-Curve Shift",
+    video: "Maze2.mp4",
+    driveLink: "https://drive.google.com/file/d/16DhX9D2OXaSWNe3uF_tRAdvI7-xgsZfL/view?usp=drive_link",
+    data: {"config":{"rows":3,"columns":5,"battery_capacity":3},"start":[2,0],"end":[1,2],"robot_direction":"north","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4]],"charging_stations":[[2,4],[0,4],[1,4],[0,1],[0,2]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[1,-1],[1,0]]},{"between":[[0,2],[1,2]]},{"between":[[1,1],[1,2]]},{"between":[[1,2],[1,3]]},{"between":[[0,4],[1,4]]},{"between":[[1,4],[1,5]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[2,0],[2,1]]},{"between":[[1,4],[2,4]]},{"between":[[2,4],[2,5]]},{"between":[[2,0],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[2,4],[3,4]]}]}
+  },
+  {
+    name: "Maze 03 — Blind Traversals & High-Noise Adaptations",
+    video: "Maze3.mp4",
+    driveLink: "https://drive.google.com/file/d/15zRupvswW97Pdtx3tLZyut9ac0GC__6T/view?usp=drive_link",
+    data: {"config":{"rows":6,"columns":6,"battery_capacity":6},"start":[0,0],"end":[5,3],"robot_direction":"east","active_cells":[[0,0],[0,1],[1,0],[1,1],[2,0],[2,1],[3,0],[3,1],[3,2],[3,3],[3,4],[3,5],[4,0],[4,1],[4,2],[4,3],[4,4],[4,5],[5,0],[5,1],[5,3],[5,4],[5,5]],"charging_stations":[[1,0],[5,0],[3,4]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[0,1],[0,2]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[1,1],[1,2]]},{"between":[[1,0],[2,0]]},{"between":[[2,-1],[2,0]]},{"between":[[2,1],[2,2]]},{"between":[[3,-1],[3,0]]},{"between":[[2,2],[3,2]]},{"between":[[2,3],[3,3]]},{"between":[[3,2],[3,3]]},{"between":[[2,4],[3,4]]},{"between":[[2,5],[3,5]]},{"between":[[3,5],[3,6]]},{"between":[[4,-1],[4,0]]},{"between":[[3,2],[4,2]]},{"between":[[3,4],[4,4]]},{"between":[[4,3],[4,4]]},{"between":[[4,4],[4,5]]},{"between":[[4,5],[4,6]]},{"between":[[4,0],[5,0]]},{"between":[[5,-1],[5,0]]},{"between":[[4,2],[5,2]]},{"between":[[5,1],[5,2]]},{"between":[[4,3],[5,3]]},{"between":[[5,2],[5,3]]},{"between":[[4,4],[5,4]]},{"between":[[5,5],[5,6]]},{"between":[[5,0],[6,0]]},{"between":[[5,1],[6,1]]},{"between":[[5,3],[6,3]]},{"between":[[5,4],[6,4]]},{"between":[[5,5],[6,5]]}]}
+  },
+  {
+    name: "Maze 04 — Intentional Structural Imperfections",
+    video: "Maze4.mp4",
+    driveLink: "https://drive.google.com/file/d/1M3vB3PeOWPRkdbppIaxKb9nSjLecG3z0/view?usp=drive_link",
+    data: {"config":{"rows":4,"columns":5,"battery_capacity":10},"start":[0,0],"end":[3,2],"robot_direction":"east","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,1],[1,2],[1,3],[1,4],[2,1],[2,2],[2,3],[2,4],[3,2],[3,3]],"charging_stations":[[2,2]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[0,0],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[1,0],[1,1]]},{"between":[[0,2],[1,2]]},{"between":[[0,3],[1,3]]},{"between":[[1,4],[1,5]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[1,4],[2,4]]},{"between":[[2,3],[2,4]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[3,1],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]}]}
+  },
+  {
+    name: "Maze 05 — The Winding Endurance Detour",
+    video: "Maze8.mp4",
+    driveLink: "https://drive.google.com/file/d/19e083YqavsR-UxMEu35sTTJELwho_LdQ/view?usp=drive_link",
+    data: {"config":{"rows":6,"columns":6,"battery_capacity":3},"start":[0,0],"end":[0,5],"robot_direction":"east","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[0,5],[1,1],[1,2],[1,3],[1,4],[2,1],[2,2],[2,3],[2,4],[3,1],[3,2],[3,3],[3,4],[4,1],[4,2],[4,3],[4,4],[5,1],[5,2],[5,3],[5,4]],"charging_stations":[[2,1],[5,1],[5,4],[3,4],[1,4]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[-1,5],[0,5]]},{"between":[[0,5],[0,6]]},{"between":[[0,0],[1,0]]},{"between":[[1,0],[1,1]]},{"between":[[0,5],[1,5]]},{"between":[[1,4],[1,5]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[2,1],[2,2]]},{"between":[[1,3],[2,3]]},{"between":[[2,3],[2,4]]},{"between":[[2,4],[2,5]]},{"between":[[3,0],[3,1]]},{"between":[[3,1],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,4],[3,5]]},{"between":[[4,0],[4,1]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]},{"between":[[4,4],[4,5]]},{"between":[[5,0],[5,1]]},{"between":[[5,4],[5,5]]},{"between":[[5,1],[6,1]]},{"between":[[5,2],[6,2]]},{"between":[[5,3],[6,3]]},{"between":[[5,4],[6,4]]}]}
+  },
+  {
+    name: "Maze 06 — UNPARALLEL WALLS: Closer-Wall Anchoring Principle",
+    video: "UnparallelWalls.mp4",
+    driveLink: "https://drive.google.com/file/d/1nJCCo_7IoL9fdcGg-rR9yYnvhZPI7-0_/view?usp=drive_link",
+    isKinematicOnly: true,
+    desc: "Kinematic alignment showcase. Ignores skewed/slanted far-side boundaries by anchoring calculation threads strictly to the closest orthogonal plane profile. Seamlessly handshakes tracking matrices during active sensor side transitions."
+  },
+  {
+    name: "Maze 07 — Failsafe Boundary Handshake Error",
+    video: "UnableToComputeRoute.mp4",
+    driveLink: "https://drive.google.com/file/d/1VEND5cTxoBvVUA6ede4g-Yw6bXwCjZN5/view?usp=drive_link",
+    isKinematicOnly: true,
+    desc: "Proves hardware-software protection and real-time safe states. When a routing error or blocked configuration space is handshake-verified, wheel co-processors lock instantly, a solid red alert triggers on the layout matrix, and drive buses cut execution threads gracefully."
+  }
 ];
 
 function mazeThumbnail(data) {
@@ -1315,26 +1401,80 @@ function closeGallery() {
 }
 
 function renderGallery() {
-  const grid = document.getElementById('gallery-grid');
-  grid.innerHTML = '';
+  const box = document.getElementById('gallery-box');
+  let head = document.getElementById('gallery-head');
+  
+  // Wipe container, maintain clear programmatic split layout channels
+  box.innerHTML = '';
+  box.appendChild(head);
 
-  mazeLibrary.forEach(({ name, data }) => {
-    const rows   = data.config?.rows || '?';
-    const cols   = data.config?.columns || '?';
-    const bat    = data.config?.battery_capacity;
-    const batLbl = (!bat || bat > 1000000) ? '∞' : bat;
-    const charges = (data.charging_stations||[]).length;
+  // Channel A: Layout Grid Title & Grid Block
+  const titleGrid = document.createElement('div');
+  titleGrid.className = 'gallery-section-title';
+  titleGrid.textContent = "🗺 Simulated Core Matrix Layouts";
+  box.appendChild(titleGrid);
 
-    const card = document.createElement('div');
-    card.className = 'mcard';
-    card.innerHTML = `
-      ${mazeThumbnail(data)}
-      <div class="mcard-name">${name}</div>
-      <div class="mcard-meta">${rows}×${cols} · bat ${batLbl}${charges ? ` · ⚡${charges}` : ''}</div>
-    `;
-    card.addEventListener('click', () => { loadGalleryMaze(data); closeGallery(); });
-    grid.appendChild(card);
+  const gridContainer = document.createElement('div');
+  gridContainer.id = 'gallery-grid';
+  box.appendChild(gridContainer);
+
+  // Channel B: Kinematic Hard-coded Logic Showcase Title & Text Block
+  const titleKin = document.createElement('div');
+  titleKin.className = 'gallery-section-title';
+  titleKin.textContent = "⚡ Kinematic Corridor Engine Demos (Hardware Logic)";
+  box.appendChild(titleKin);
+
+  const listContainer = document.createElement('div');
+  listContainer.className = 'kinematic-list';
+  box.appendChild(listContainer);
+
+  // Populate channel rows smoothly from data arrays
+  mazeLibrary.forEach((m) => {
+    if (m.isKinematicOnly) {
+      const kCard = document.createElement('div');
+      // Explicitly flag Unparallel walls via targeted condition block
+      const isUnparallel = m.name.includes("UNPARALLEL");
+      kCard.className = 'kcard';
+      
+      kCard.innerHTML = `
+        <div class="kcard-info">
+          <div class="kcard-title">${m.name}</div>
+          <div class="kcard-desc">${m.desc}</div>
+        </div>
+        <div style="margin-left:14px;">
+          <button class="btn-solve" onclick="window.open('${m.driveLink}', '_blank')" style="background:#2563eb; font-size:9px; padding:6px 12px;">📁 DRIVE VID</button>
+        </div>
+      `;
+      listContainer.appendChild(kCard);
+    } else {
+      const rows = m.data.config?.rows || '?';
+      const cols = m.data.config?.columns || '?';
+      const bat = m.data.config?.battery_capacity;
+      const batLbl = (!bat || bat > 1000000) ? '∞' : bat;
+      const charges = (m.data.charging_stations||[]).length;
+
+      const card = document.createElement('div');
+      card.className = 'mcard';
+      card.innerHTML = `
+        ${mazeThumbnail(m.data)}
+        <div class="mcard-name">${m.name}</div>
+        <div class="mcard-meta">${rows}×${cols} · bat ${batLbl}${charges ? ` · ⚡${charges}` : ''}</div>
+        <div style="display:flex; width:100%; margin-top:auto;">
+          <button class="mcard-vid-btn" style="background:#2563eb; padding:6px;" onclick="event.stopPropagation(); window.open('${m.driveLink}', '_blank')">📁 DRIVE</button>
+        </div>
+      `;
+      card.addEventListener('click', () => { loadGalleryMaze(m.data); closeGallery(); });
+      gridContainer.appendChild(card);
+    }
   });
+
+  // Master anchor row linking to whole presentations resource tree
+  const globalFolderLink = document.createElement('a');
+  globalFolderLink.className = 'gallery-footer-link';
+  globalFolderLink.href = "https://drive.google.com/drive/folders/example-master-presentation-folder";
+  globalFolderLink.target = "_blank";
+  globalFolderLink.textContent = "🌐 Open Master Presentation Folder (Google Drive)";
+  box.appendChild(globalFolderLink);
 }
 
 function loadGalleryMaze(data) {
@@ -1354,53 +1494,29 @@ function loadGalleryMaze(data) {
   document.getElementById('path-status').innerHTML = `<span class="status-success">✔ Maze loaded — click SOLVE ▶ to run.</span>`;
   document.getElementById('path-route').textContent = 'Maze loaded. Click SOLVE ▶ to find a path.';
 }
-/*
 
-    data:{config:{rows:4,columns:4,battery_capacity:5},start:[0,0],end:[0,3],robot_direction:"east",
-      active_cells:[[0,0],[0,1],[0,2],[0,3]],charging_stations:[],walls:[]} },
-  { name:"L-Turn",
-    data:{config:{rows:4,columns:4,battery_capacity:8},start:[0,0],end:[3,3],robot_direction:"south",
-      active_cells:[[0,0],[1,0],[2,0],[3,0],[3,1],[3,2],[3,3]],charging_stations:[],walls:[]} },
-  { name:"S-Curve",
-    data:{config:{rows:5,columns:4,battery_capacity:12},start:[0,0],end:[4,3],robot_direction:"east",
-      active_cells:[[0,0],[0,1],[0,2],[1,2],[2,2],[2,1],[2,0],[3,0],[4,0],[4,1],[4,2],[4,3]],charging_stations:[],walls:[]} },
-  { name:"T-Junction",
-    data:{config:{rows:4,columns:5,battery_capacity:8},start:[0,2],end:[3,4],robot_direction:"south",
-      active_cells:[[0,2],[1,0],[1,1],[1,2],[1,3],[1,4],[2,4],[3,4]],charging_stations:[],walls:[]} },
-  { name:"Pit Stop Required",
-    data:{config:{rows:6,columns:4,battery_capacity:5},start:[0,0],end:[5,3],robot_direction:"south",
-      active_cells:[[0,0],[1,0],[2,0],[2,1],[2,2],[2,3],[3,3],[4,3],[5,3]],charging_stations:[[2,1]],walls:[]} },
-  { name:"U-Turn",
-    data:{config:{rows:5,columns:3,battery_capacity:10},start:[0,0],end:[0,2],robot_direction:"south",
-      active_cells:[[0,0],[1,0],[2,0],[3,0],[4,0],[4,1],[4,2],[3,2],[2,2],[1,2],[0,2]],charging_stations:[],walls:[]} },
-  { name:"Cross Roads",
-    data:{config:{rows:5,columns:5,battery_capacity:10},start:[2,0],end:[0,2],robot_direction:"east",
-      active_cells:[[0,2],[1,2],[2,0],[2,1],[2,2],[2,3],[2,4],[3,2],[4,2]],charging_stations:[],walls:[]} },
-  { name:"Snake Run",
-    data:{config:{rows:6,columns:4,battery_capacity:16},start:[0,0],end:[5,3],robot_direction:"east",
-      active_cells:[[0,0],[0,1],[0,2],[0,3],[1,3],[2,3],[2,2],[2,1],[2,0],[3,0],[4,0],[4,1],[4,2],[4,3],[5,3]],charging_stations:[],walls:[]} },
-  { name:"Long Haul",
-    data:{config:{rows:3,columns:8,battery_capacity:5},start:[0,0],end:[2,7],robot_direction:"east",
-      active_cells:[[0,0],[0,1],[0,2],[0,3],[1,3],[2,3],[2,4],[2,5],[2,6],[2,7]],charging_stations:[[0,2]],walls:[]} },
-  { name:"Double Charge",
-    data:{config:{rows:8,columns:4,battery_capacity:4},start:[0,0],end:[7,3],robot_direction:"south",
-      active_cells:[[0,0],[1,0],[2,0],[3,0],[3,1],[3,2],[3,3],[4,3],[5,3],[6,3],[6,2],[6,1],[6,0],[7,0],[7,1],[7,2],[7,3]],charging_stations:[[1,0],[5,3]],walls:[]} },
-  { name:"Open Field",
-    data:{config:{rows:5,columns:5,battery_capacity:15},start:[0,0],end:[4,4],robot_direction:"east",
-      active_cells:[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4],[3,0],[3,1],[3,2],[3,3],[3,4],[4,0],[4,1],[4,2],[4,3],[4,4]],charging_stations:[],walls:[]} },
-  { name:"Island Chain",
-    data:{config:{rows:5,columns:5,battery_capacity:10},start:[0,0],end:[4,4],robot_direction:"east",
-      active_cells:[[0,0],[0,1],[1,1],[1,2],[2,2],[2,3],[3,3],[3,4],[4,4]],charging_stations:[],walls:[]} },
-  { name:"Walled Garden",
-    data:{config:{rows:4,columns:4,battery_capacity:10},start:[0,0],end:[3,3],robot_direction:"south",
-      active_cells:[[0,0],[0,1],[0,2],[0,3],[1,0],[1,1],[1,2],[1,3],[2,0],[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3]],
-      charging_stations:[],
-      walls:[{between:[[0,1],[0,2]]},{between:[[1,0],[1,1]]},{between:[[1,2],[1,3]]},{between:[[2,1],[2,2]]},{between:[[1,2],[2,2]]},{between:[[2,2],[3,2]]}]} },
-  { name:"Quick Sprint",
-    data:{config:{rows:3,columns:5,battery_capacity:6},start:[1,0],end:[1,4],robot_direction:"east",
-      active_cells:[[0,2],[1,0],[1,1],[1,2],[1,3],[1,4],[2,2]],charging_stations:[],walls:[]} },
- */
 
+
+function updateRunAnalyticsLog(data) {
+  const body = document.getElementById('journey-log-body');
+  if (!body) return;
+
+  const totalGrids = data.grids ?? (currentPath ? currentPath.length - 1 : 0);
+  const batteryUsed = data.batteryConsumed ?? (currentPath ? currentPath.length - 1 : 0);
+  const durationSec = data.durationSec ?? (totalGrids * 1.5).toFixed(1);
+  const distMeters = (totalGrids * 0.3).toFixed(1);
+  const avgSpeed = durationSec > 0 ? ((totalGrids * 30) / durationSec).toFixed(1) : "0.0";
+
+  body.style.opacity = "1";
+  body.innerHTML = `
+    <div style="color:#facc15; font-weight:bold; margin-bottom:3px;">✔ JOURNEY COMPLETE</div>
+    <div>• <b>Dist :</b> ${totalGrids} Grids (${distMeters}m)</div>
+    <div>• <b>Bat  :</b> ${batteryUsed} units</div>
+    <div>• <b>Time :</b> ${durationSec}s</div>
+    <div>• <b>Speed:</b> ${avgSpeed} cm/s</div>
+    <div style="margin-top:4px; font-size:8px; opacity:0.75; color:#94a3b8;">Logged at ${new Date().toLocaleTimeString()}</div>
+  `;
+}
 
 // ── GLOBAL CLOSED-LOOP TELEMETRY TRACKER ENGINE ──────────────────────
 function yawToDir(yaw) {
@@ -1571,7 +1687,6 @@ function liveTick() {
   let idx = t.stepIdx; if (idx < 0) idx = 0;
   const running = (t.state === 'RUNNING' || t.state === 'DRIVING');
   const turning = (t.state && (t.state.includes("TURN") || t.state === "PIVOT_TURNING" || t.state.includes("VERIFY")));
-  const charging = (t.state === 'CHARGING');
 
   // ── COMPRESSED LEG MAPPING (map stepIdx directly to liveLegs) ────
   // The injector's stepIdx is a per-STEP index (one idx per multi-grid run),
@@ -1582,6 +1697,21 @@ function liveTick() {
   if (!leg) {
     leg = { r0: startCell[0], c0: startCell[1], r1: startCell[0], c1: startCell[1], grids: 1, dr: 0, dc: 0 };
   }
+
+  // Step-increment edge detect: (re)start the animation timer on new idx.
+  if (running && idx !== prevDriveStepIdx) {
+    prevDriveStepIdx = idx;
+    driveLegStartMs = performance.now();
+    driveLegTargetIdx = idx;
+  }
+
+  // Calculate progressFrac smoothly across the entire compressed segment.
+  let elapsed = performance.now() - driveLegStartMs;
+  let totalLegDuration = leg.grids * 1500;
+  let progressFrac = running ? Math.min(elapsed / totalLegDuration, 1) : 1;
+
+  const arrivedAtChargeLeg = running && leg.action === 1 && progressFrac >= 1;
+  const charging = (t.state === 'CHARGING') || arrivedAtChargeLeg;
 
   // DIAGNOSTIC LOG on STEP transition (Task 1 trace): confirms idx↔leg mapping.
   if (idx !== _lastLoggedIdx) {
@@ -1597,6 +1727,8 @@ function liveTick() {
   if (leg.dr !== 0 || leg.dc !== 0) {
     logicDir = leg.dr < 0 ? 'north' : leg.dr > 0 ? 'south' : leg.dc > 0 ? 'east' : 'west';
     lastValidLogicDir = logicDir;
+  } else if (!running) {
+    logicDir = robotDirection;
   }
   // Visual direction (for SVG rotation only) — derived from yaw, never used in logic.
   const visualYawDir = yawToDir(((t.yaw || 0) % 360 + 360) % 360);
@@ -1669,18 +1801,6 @@ function liveTick() {
   // step position. A fixed 1500ms baseline pacing scale is multiplied by the
   // number of grids in the compressed segment to get the total leg duration.
 
-  // Step-increment edge detect: (re)start the animation timer on new idx.
-  if (running && idx !== prevDriveStepIdx) {
-    prevDriveStepIdx = idx;
-    driveLegStartMs = performance.now();
-    driveLegTargetIdx = idx;
-  }
-
-  // Calculate progressFrac smoothly across the entire compressed segment.
-  let elapsed = performance.now() - driveLegStartMs;
-  let totalLegDuration = leg.grids * 1500;
-  let progressFrac = running ? Math.min(elapsed / totalLegDuration, 1) : 1;
-
   // STOP-AND-WAIT SAFEGUARD: if totalLegDuration completed but no new step
   // index yet, rover stays parked at the end of the leg (progressFrac=1).
 
@@ -1730,7 +1850,7 @@ function liveTick() {
     }
   }
 
-  drawLiveRover(x, y, visualYawDir, cs);
+  drawLiveRover(x, y, logicDir, cs);
   liveRAF = requestAnimationFrame(liveTick);
 }
 
@@ -1760,37 +1880,30 @@ window.updateLiveTrackerUI = function(stepIdx, yaw, left, front, right, stateLab
       xhr.send();
       if (xhr.status === 200) {
         let lines = xhr.responseText.trim().split("\n");
-        let currentCellPtr = 0;
+        let cursorR = startCell[0], cursorC = startCell[1];
 
         for (let line of lines) {
           if (line.startsWith("STEP:")) {
             let parts = line.split(":")[1].split(",");
             let stepIdx = parseInt(parts[0]);
-            let orient = parseInt(parts[1]);
-            let grids = parseInt(parts[2]);
+            let orient  = parseInt(parts[1]);
+            let grids   = parseInt(parts[2]);
+            let action  = parts.length > 5 ? parseInt(parts[5]) : 0;
 
-            if (currentCellPtr < currentPath.length) {
-              let startNode = currentPath[currentCellPtr];
-              let endNode = currentPath[Math.min(currentCellPtr + grids, currentPath.length - 1)];
+            let dr = 0, dc = 0;
+            if (orient === 0) dr = -1;
+            if (orient === 1) dc = 1;
+            if (orient === 2) dr = 1;
+            if (orient === 3) dc = -1;
 
-              let dr = 0, dc = 0;
-              if (orient === 0) dr = -1;
-              if (orient === 1) dc = 1;
-              if (orient === 2) dr = 1;
-              if (orient === 3) dc = -1;
+            const r0 = cursorR, c0 = cursorC;
+            const r1 = cursorR + dr * grids;
+            const c1 = cursorC + dc * grids;
 
-              liveLegs.push({
-                r0: startNode.cell[0],
-                c0: startNode.cell[1],
-                r1: endNode.cell[0],
-                c1: endNode.cell[1],
-                grids: grids,
-                dr: dr,
-                dc: dc
-              });
+            liveLegs.push({ r0, c0, r1, c1, grids, dr, dc, action });
 
-              currentCellPtr += grids;
-            }
+            cursorR = r1;
+            cursorC = c1;
           }
         }
       }
@@ -1821,6 +1934,9 @@ window.updateLiveTrackerUI = function(stepIdx, yaw, left, front, right, stateLab
     const staticRover = document.getElementById('static-start-rover');
     if (staticRover) staticRover.style.display = 'none';
   } else if (stateLabel === "IDLE" || stateLabel === "OFFLINE") {
+    if (isLiveTrackingActive) {
+      updateRunAnalyticsLog({});
+    }
     isLiveTrackingActive = false;
     hideLiveRover();
     const staticRover = document.getElementById('static-start-rover');
