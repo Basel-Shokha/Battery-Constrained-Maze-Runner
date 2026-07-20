@@ -1,6 +1,4 @@
-// ============================================================
-//  TAB 2: ESP32.ino — Master Core Parser & Execution Loop
-// ============================================================
+
 #include "PROTOCOL.h"
 #include <Adafruit_NeoPixel.h>
 
@@ -16,7 +14,7 @@ bool isAwaitingChargeDoneAck        = false;
 
 String inputBuffer = "";
 
-///#GEMINI: INTERCEPT OVERWRITE PARAMETER REGISTER ENTRIES
+
 bool continuousWhiteMode       = false;
 bool batteryIndicatorActive    = false;
 int currentGreenLedsCount      = 0;
@@ -58,11 +56,11 @@ void loop() {
             M5Serial.println("NOTIFY:CHARGE_DONE");
         }
     } 
-    ///#GEMINI: Guard white mode configurations against breathing overwrites
+    
     else if (continuousWhiteMode) {
         setRingColor(150, 150, 150);
     }
-    ///#GEMINI: Guard battery indicator rings against breathing overwrites
+    
     else if (batteryIndicatorActive) {
         clearRing();
         for (int i = 0; i < currentGreenLedsCount; i++) {
@@ -129,17 +127,17 @@ void parsePacket(String inLine) {
         isAwaitingChargeDoneAck = true;
         notifyResendTime = 0;
     }
-    ///#GEMINI: Mode specific ring formatting parser block
+    
     else if (cmdId == CMD_BATTERY_UPDATE) {
         if (p1 == 255 && p2 == 255) {
             continuousWhiteMode    = true;
             batteryIndicatorActive = false;
-            setRingColor(150, 150, 150); // Set ring solid white
+            setRingColor(150, 150, 150); 
         } 
         else if (p1 == 0 && p2 == 0) {
             continuousWhiteMode    = false;
             batteryIndicatorActive = false;
-            lastOrangeUpdateTime   = millis(); // Release overrides back to breathing
+            lastOrangeUpdateTime   = millis(); 
         }
         else if (p2 > 0) {
             continuousWhiteMode    = false;
