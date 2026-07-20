@@ -1,6 +1,4 @@
-// ============================================================
-//  TAB 4: MP3.ino — Hardware Serial Voice Module Driver
-// ============================================================
+
 #include <HardwareSerial.h>
 
 HardwareSerial MP3(1);
@@ -21,13 +19,13 @@ void selectSDCard() {
 }
 
 void initMP3() {
-    // Cross-wires Pin D27 to MP3 Module TX, Pin D14 to MP3 Module RX
+    
     MP3.begin(9600, SERIAL_8N1, 27, 14);
     delay(100);
     
     resetMP3();
     selectSDCard();
-    delay(1200); // Latch processing time for the SD card directory allocation
+    delay(1200); 
 }
 
 bool resetMP3() {
@@ -40,7 +38,7 @@ bool resetMP3() {
 }
 
 void setVolume(uint8_t volume) {
-    if (volume > 30) volume = 30; // Max volume boundary protection limit
+    if (volume > 30) volume = 30; 
     
     MP3.write(START_BYTE);
     MP3.write((byte)0x03);
