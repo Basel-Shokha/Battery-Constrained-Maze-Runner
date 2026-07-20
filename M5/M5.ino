@@ -385,6 +385,7 @@ void loop() {
           summaryScreenCleared = true;
           M5.Lcd.fillScreen(BLACK); 
       }
+      M5.Lcd.setTextSize(1);
       M5.Lcd.setCursor(0, 0);
       M5.Lcd.setTextColor(GREEN, BLACK);
       M5.Lcd.println("=== JOURNEY SUMMARY ===");
@@ -403,6 +404,7 @@ void loop() {
       M5.Lcd.printf("Steer: %d Adjustments\n", totalSteeringCorrections);
       M5.Lcd.setTextColor(YELLOW, BLACK);
       M5.Lcd.println("=======================");
+      M5.Lcd.setTextSize(2);
     }
     else {
       M5.Lcd.setCursor(0, 0);
