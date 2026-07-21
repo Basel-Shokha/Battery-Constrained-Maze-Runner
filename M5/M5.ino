@@ -67,7 +67,7 @@ volatile uint16_t s_left = 0, s_front = 0, s_right = 0;
 unsigned long lastDrawTime   = 0;
 unsigned long lastSampleTime = 0;
 unsigned long settleTimer    = 0;
-int16_t baselineSpeed        = 30; 
+int16_t baselineSpeed        = 25; 
 
 unsigned long lastStuckCheckTime = 0;
 float lastStuckCheckYaw          = 0.0f;
@@ -383,12 +383,12 @@ void loop() {
           summaryScreenCleared = true;
           M5.Lcd.fillScreen(BLACK); 
       }
-      M5.Lcd.setTextSize(1);
+      M5.Lcd.setTextSize(2);
       M5.Lcd.setCursor(0, 0);
       M5.Lcd.setTextColor(GREEN, BLACK);
       M5.Lcd.println("=== JOURNEY SUMMARY ===");
       M5.Lcd.setTextColor(WHITE, BLACK);
-      M5.Lcd.printf("Dist : %d Grids (%.1fm)\n", totalGridsWalked, totalGridsWalked * 0.3f);
+      M5.Lcd.printf("Dist: %d Grids-%.1fm\n", totalGridsWalked, (float)totalGridsWalked * 0.3f);
       M5.Lcd.printf("Docks: %d Pitstops ⚡\n", totalChargingStationsCleared);
       M5.Lcd.printf("Turns: %d Pivot Turns\n", totalPivotTurns);
       
