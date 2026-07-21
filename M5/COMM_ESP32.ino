@@ -1,6 +1,4 @@
-// ============================================================
-//  TAB 3: COMM_ESP32.ino — Non-Blocking UART Handshake Receiver
-// ============================================================
+
 #include <HardwareSerial.h>
 
 extern HardwareSerial ESP32Serial;
@@ -15,12 +13,12 @@ void initPeripheralUART() {
 }
 
 void receivePeripheralTelemetry() {
-    // ── RULE 1 & 2: CHARACTER-STREAM TELEMETRY ACCUMULATION ──
+   
     while (ESP32Serial.available() > 0) {
         char c = ESP32Serial.read();
         if (c == '\n') {
             m5UartBuffer.trim();
-            // Unacknowledged continuous distance stream
+            
             if (m5UartBuffer.startsWith("DIST:")) {
                 int parsedLeft, parsedFront, parsedRight;
                 if (sscanf(m5UartBuffer.c_str(), "DIST:%d,%d,%d", &parsedLeft, &parsedFront, &parsedRight) == 3) {
@@ -29,15 +27,15 @@ void receivePeripheralTelemetry() {
                     s_right = parsedRight;
                 }
             }
-            // Acknowledgment for Charging Initialization
+            
             else if (m5UartBuffer == "ACK:3") {
                 chargeStartAckReceived = true;
                 Serial.println("[HANDSHAKE-UART] ESP32 confirmed charging cycle setup.");
             }
-            // Acknowledgment loop intercept for Charging Completion
+            
             else if (m5UartBuffer == "NOTIFY:CHARGE_DONE") {
                 esp32ChargeFinished = true;
-                // Instantly echo confirmation back so the co-processor releases its loop hold
+                
                 ESP32Serial.println("ACK:CHARGE_DONE");
             }
             
