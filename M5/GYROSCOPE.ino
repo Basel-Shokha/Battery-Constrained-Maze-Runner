@@ -2,10 +2,10 @@
 #include <Wire.h>
 #include <math.h>
 
-// Link directly to the main loop's external speed register variable
+
 extern int16_t baselineSpeed;
 
-// ── GYRO & ORIENTATION GLOBALS ────────────────────────────
+
 float gyroX, gyroY, gyroZ;
 float gyroZoffset   = 0.0f;
 float yaw           = 0.0f;
@@ -13,23 +13,23 @@ float targetHeading = 0.0f;
 float turnTargetYaw = 0.0f;
 unsigned long lastTime = 0;
 
-// ── ROLLING AVERAGE FILTERS FOR WALL ALIGNMENT ────────────
+
 float vRightHistory[10] = {0};
 float vLeftHistory[10]  = {0};
 int historyIdx          = 0;
 float lastDistR         = 0.0f;
 float lastDistL         = 0.0f;
 
-// Exposing these so your main loop screen display can still read them
+
 float vRight     = 0.0f;
 float vLeft      = 0.0f; 
 bool isAligning  = false;
 
-// FIXED: Added 'volatile' to match the main M5.ino file strictly!
+
 extern volatile uint16_t s_left, s_front, s_right;
 extern void setMotors(int8_t fl, int8_t fr, int8_t rl, int8_t rr);
 
-// ── MATHEMATICAL UTILITIES ────────────────────────────────
+
 float wrap360(float a) {
     a = fmodf(a, 360.0f);
     if (a < 0.0f) a += 360.0f;
@@ -43,7 +43,7 @@ float angleDiff(float target, float current) {
     return diff;
 }
 
-// ── CORE GYRO DRIVER FUNCTIONS ────────────────────────────
+
 void calibrateGyro() {
     stopMotors();
     float sum = 0.0f;
@@ -70,7 +70,7 @@ void updateYaw() {
     yaw = wrap360(yaw);
 }
 
-// ── KINEMATICS & CHASSIS CONTROL ──────────────────────────
+
 void resetSpeedHistory() {
     for(int i = 0; i < 10; i++) {
         vRightHistory[i] = 0.0f;
@@ -88,7 +88,7 @@ void walkForward() {
     float error      = angleDiff(targetHeading, yaw);
     float correction = constrain(0.4f * error, -30.0f, 30.0f);
     
-    // baselineSpeed is dynamically injected from the Xbox controller menu
+    
     int8_t L = constrain((int)(baselineSpeed + correction), -127, 127);
     int8_t R = constrain((int)(baselineSpeed - correction), -127, 127);
     
@@ -117,27 +117,24 @@ void processParallelAlignment(unsigned long now, unsigned long &lastSampleTime) 
     lastDistL = s_left;
     lastSampleTime = now;
 
-    ///#GEMINI
-    // ══════════════════════════════════════════════════════════
-    //  SENSOR-STEERING INTERCEPT ENGINE (THE ARGENTINA LOGIC)
-    // ══════════════════════════════════════════════════════════
+    
     bool followLeft = (s_left < s_right);
     isAligning = false;
 
     if (followLeft) {
-        if (vLeft > 20.0f) {        // Approaching left wall too aggressively
-            targetHeading = wrap360(targetHeading + 0.75f); // Micro-steer Right
+        if (vLeft > 20.0f) {        
+            targetHeading = wrap360(targetHeading + 0.75f); 
             isAligning = true;
-        } else if (vLeft < -20.0f) { // Drifting away from left wall
-            targetHeading = wrap360(targetHeading - 0.75f); // Micro-steer Left
+        } else if (vLeft < -20.0f) { 
+            targetHeading = wrap360(targetHeading - 0.75f); 
             isAligning = true;
         }
     } else {
-        if (vRight > 20.0f) {       // Approaching right wall too aggressively
-            targetHeading = wrap360(targetHeading - 0.75f); // Micro-steer Left
+        if (vRight > 20.0f) {       
+            targetHeading = wrap360(targetHeading - 0.75f); 
             isAligning = true;
-        } else if (vRight < -20.0f) { // Drifting away from right wall
-            targetHeading = wrap360(targetHeading + 0.75f); // Micro-steer Right
+        } else if (vRight < -20.0f) { 
+            targetHeading = wrap360(targetHeading + 0.75f); 
             isAligning = true;
         }
     }
