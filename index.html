@@ -72,7 +72,7 @@ button:hover{filter:brightness(0.9);}
 #path-route{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* Right theme panel */
-#theme-panel{width:160px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;padding:16px 8px;gap:8px;}
+#theme-panel{width:160px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;padding:16px 8px 340px 8px;gap:8px;}
 #theme-panel h3{font-size:12px;text-transform:uppercase;margin-bottom:6px;text-align:center;}
 
 
@@ -241,7 +241,7 @@ button:hover{filter:brightness(0.9);}
     <div class="vdiv"></div>
 
     <!-- Solve -->
-    <button class="btn-solve" id="solve-btn" onclick="solve()">SOLVE ▶</button>
+    <button class="btn-solve" id="solve-btn" onclick="solve()">SIMULATE ▶</button>
     <!-- Inside the topbar div, right next to the SOLVE button -->
 
     <button class="btn-solve" id="send-btn" onclick="sendMazeToM5()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">SEND TO M5 ⬆</button>
@@ -437,7 +437,7 @@ async function resetM5Run() {
 
     const solveBtn = document.getElementById('solve-btn');
     solveBtn.disabled = false;
-    solveBtn.textContent = 'SOLVE ▶';
+    solveBtn.textContent = 'SIMULATE ▶';
     refreshIcons();
   } catch (err) {
     document.getElementById('path-status').innerHTML =
@@ -976,7 +976,7 @@ async function solve() {
       `<span class="status-danger">⚠ Cannot reach solver at localhost:8080 — ${err.message}</span>`;
   }
 
-  btn.disabled = false; btn.textContent = 'SOLVE ▶';
+  btn.disabled = false; btn.textContent = 'SIMULATE ▶';
 }
 
 
@@ -1275,7 +1275,7 @@ function resetToEdit() {
   // Re-enable the solve button just in case
   const btn = document.getElementById('solve-btn');
   btn.disabled = false;
-  btn.textContent = 'SOLVE ▶';
+  btn.textContent = 'SIMULATE ▶';
 
   // Bring back the static icons (including the start rover)
   refreshIcons();
@@ -1328,6 +1328,12 @@ const mazeLibrary = [
     driveLink: "https://drive.google.com/file/d/1VEND5cTxoBvVUA6ede4g-Yw6bXwCjZN5/view?usp=drive_link",
     isKinematicOnly: true,
     desc: "Proves hardware-software protection and real-time safe states. When a routing error or blocked configuration space is handshake-verified, wheel co-processors lock instantly, a solid red alert triggers on the layout matrix, and drive buses cut execution threads gracefully."
+  },
+  {
+    name: "Maze 08 — Custom Layout",
+    video: "",
+    driveLink: "",
+    data: {"config":{"rows":4,"columns":5,"battery_capacity":10},"start":[0,0],"end":[2,0],"robot_direction":"east","active_cells":[[0,0],[0,1],[0,2],[0,3],[0,4],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3]],"charging_stations":[[1,0]],"walls":[{"between":[[-1,0],[0,0]]},{"between":[[0,-1],[0,0]]},{"between":[[-1,1],[0,1]]},{"between":[[-1,2],[0,2]]},{"between":[[-1,3],[0,3]]},{"between":[[-1,4],[0,4]]},{"between":[[0,4],[0,5]]},{"between":[[0,0],[1,0]]},{"between":[[1,-1],[1,0]]},{"between":[[0,1],[1,1]]},{"between":[[0,2],[1,2]]},{"between":[[0,3],[1,3]]},{"between":[[1,4],[1,5]]},{"between":[[1,0],[2,0]]},{"between":[[2,-1],[2,0]]},{"between":[[1,1],[2,1]]},{"between":[[2,0],[2,1]]},{"between":[[1,2],[2,2]]},{"between":[[2,2],[2,3]]},{"between":[[1,4],[2,4]]},{"between":[[2,3],[2,4]]},{"between":[[3,-1],[3,0]]},{"between":[[2,1],[3,1]]},{"between":[[2,2],[3,2]]},{"between":[[3,3],[3,4]]},{"between":[[3,0],[4,0]]},{"between":[[3,1],[4,1]]},{"between":[[3,2],[4,2]]},{"between":[[3,3],[4,3]]}]}
   }
 ];
 
@@ -1471,7 +1477,7 @@ function renderGallery() {
   // Master anchor row linking to whole presentations resource tree
   const globalFolderLink = document.createElement('a');
   globalFolderLink.className = 'gallery-footer-link';
-  globalFolderLink.href = "https://drive.google.com/drive/folders/example-master-presentation-folder";
+  globalFolderLink.href = "https://drive.google.com/drive/folders/1vb1DN_DnsO-4dPBeF7uNtpGT5hjrC3N2?usp=sharing";
   globalFolderLink.target = "_blank";
   globalFolderLink.textContent = "🌐 Open Master Presentation Folder (Google Drive)";
   box.appendChild(globalFolderLink);
@@ -1491,8 +1497,8 @@ function loadGalleryMaze(data) {
   }
   generateGrid(false);
   applyResponseData(data);
-  document.getElementById('path-status').innerHTML = `<span class="status-success">✔ Maze loaded — click SOLVE ▶ to run.</span>`;
-  document.getElementById('path-route').textContent = 'Maze loaded. Click SOLVE ▶ to find a path.';
+  document.getElementById('path-status').innerHTML = `<span class="status-success">✔ Maze loaded — click SIMULATE ▶ to run.</span>`;
+  document.getElementById('path-route').textContent = 'Maze loaded. Click SIMULATE ▶ to find a path.';
 }
 
 
