@@ -1,6 +1,4 @@
-// ============================================================
-//  TAB 1: M5.ino — Maze Core State Orchestration Engine
-// ============================================================
+
 #include <M5StickCPlus.h>
 #include <Wire.h>
 #include <math.h>
@@ -51,10 +49,10 @@ extern void refillBatteryOnCharge();
 
 bool journeyJustStarted = true;
 
-// ── FIXED USER SPEED PARAMETERS ──
+
 unsigned long FIRST_GRID_BLIND_TIME = 1500; 
 unsigned long REST_GRID_BLIND_TIME  = 1300;
-int8_t BASE_TURN_SPEED              = 23; // Reverted back to 23 for precision
+int8_t BASE_TURN_SPEED              = 23; 
 uint8_t MP3_VOLUME                  = 25;
 
 int AUDIO_MISSION_START_TRACK       = 101; 
