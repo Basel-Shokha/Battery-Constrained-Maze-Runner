@@ -1,6 +1,4 @@
-// ============================================================
-//  TAB 2: COMM_PC.ino — Wi-Fi Network & Event Notification Hub
-// ============================================================
+
 #include <WiFi.h>
 #include <HTTPClient.h>
 
@@ -40,7 +38,7 @@ unsigned long lastPcStreamTime       = 0;
 unsigned long lastInstructionPollTime = 0;
 unsigned long lastControlPollTime     = 0;
 
-// Locked to exactly 4 times a second to prevent I2C bus clock starvation
+
 unsigned long TELEMETRY_INTERVAL_MS = 250; 
 
 bool pcConnected = true;
