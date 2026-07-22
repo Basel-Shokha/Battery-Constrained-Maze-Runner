@@ -1,6 +1,6 @@
 # 🔋 Battery-Constrained Maze Runner — Group 6
 
-A robotic delivery system built around a **remote-brain architecture**: an ESP32-driven robot navigates a physical maze while a C++ routing server on a PC computes optimal, battery-aware paths and streams live commands over Wi-Fi. A browser dashboard visualizes the maze, the robot's live position, and its simulated battery state in real time.
+A robotic delivery system built around a **remote-brain architecture**: an M5StickC Plus-driven rover navigates a physical maze while a C++ routing server on a PC computes optimal, battery-aware paths that the rover polls over Wi-Fi. A browser dashboard visualizes the maze, the robot's live position, and its simulated battery state in real time.
 
 Built as part of the IOT project for the **Interdisciplinary Center for Smart Technologies (ICST)**, Taub Faculty of Computer Science, Technion.
 
@@ -12,28 +12,32 @@ Built as part of the IOT project for the **Interdisciplinary Center for Smart Te
 ## 🧠 System Architecture
 
 ```
-┌─────────────────┐   HTTP (8085)    ┌──────────────────────┐
-│  index.html      │ ───────────────▶ │   main.cpp            │
-│  Dashboard (PC)   │ ◀─────────────── │   Routing Server (C++) │
-└─────────────────┘   UDP  (8086)    │   MazeSolver engine   │
-                       telemetry      └──────────┬────────────┘
-                                                  │ Wi-Fi (custom text protocol)
-                                                  ▼
-                                        ┌───────────────────┐
-                                        │   M5StickC Plus     │
-                                        │   (RoverC mecanum)  │
-                                        └─────────┬──────────┘
-                                                  │ UART / I2C
-                                                  ▼
-                                        ┌───────────────────┐
-                                        │   ESP32 co-processor │
-                                        │   ToF · LED · MP3    │
-                                        └───────────────────┘
+┌───────────────────┐    HTTP :8085     ┌────────────────────────┐
+│  index.html         │ ─────────────────▶ │      main.cpp             │
+│  Dashboard (PC)      │ ◀───────────────── │  Routing Server (C++)     │
+└───────────────────┘   (send_maze,       │  MazeSolver engine        │
+                          solve, reset,     └───────────┬────────────┘
+                          get_telemetry…)               │
+                                             ▲           │  M5 polls this same
+                                     UDP :8086│           │  server over HTTP GET
+                                    telemetry │           │  (get_instructions,
+                                     (push)   │           ▼  get_calibrate, get_reset)
+                                   ┌───────────────────────┐
+                                   │     M5StickC Plus       │
+                                   │     (RoverC mecanum)    │
+                                   │  Wi-Fi + motors + gyro   │
+                                   └────────────┬────────────┘
+                                                │ UART (PACKET:/DIST: protocol)
+                                                ▼
+                                   ┌───────────────────────┐
+                                   │   ESP32 co-processor    │
+                                   │   ToF · LED · MP3        │
+                                   └───────────────────────┘
 ```
 
-- **PC (Remote Brain):** the routing server (`main.cpp` + `MazeSolver`) receives the maze layout from the dashboard, runs pathfinding under a battery-capacity constraint, and streams movement instructions to the robot. It also receives live telemetry over UDP and serves it back to the dashboard over HTTP.
-- **M5StickC Plus:** onboard controller for the RoverC mecanum chassis. Handles Wi-Fi comms with the PC, motor control, and gyro-based heading lock.
-- **ESP32 co-processor:** handles the "senses" — three VL53L1X ToF distance sensors for wall/collision detection, a WS2812B LED ring for battery/status indication, and an MP3 module for audio cues.
+- **PC (Remote Brain):** the routing server (`main.cpp` + `MazeSolver`) receives the maze layout from the dashboard, runs pathfinding under a battery-capacity constraint, and holds the resulting instructions ready for the rover to pick up. It's a pull model on the rover's side: the M5 itself polls the server over HTTP for instructions, calibration, and reset requests, and separately pushes live telemetry to the server over UDP and posts event notifications (`notify_event`) over HTTP. The server also serves the dashboard its own set of endpoints (`send_maze`, `solve`, `get_maze`, `get_telemetry`, etc.).
+- **M5StickC Plus:** the actual Wi-Fi endpoint of the robot. Polls the PC server for its route, drives the RoverC mecanum motors directly over I2C, and runs gyro-based heading lock and the emergency strafe/turn state machine.
+- **ESP32 co-processor:** has no Wi-Fi role at all — it's a UART peripheral to the M5, handling the "senses": three VL53L1X ToF distance sensors, a WS2812B LED ring for battery/status indication, and an MP3 module for audio cues.
 - **Dashboard (`index.html`):** a single-file browser app for maze setup, path visualization, live tracking, and manual route drawing.
 
 ### Why two controllers instead of one
@@ -109,8 +113,8 @@ The two-controller split resolves this cleanly: the M5 stays factory-mounted, po
 
 | Part | Purpose |
 |---|---|
-| ESP32 DevKit V1 | Wi-Fi command reception, motor/LED/audio driving |
-| M5StickC Plus + RoverC | Mecanum-wheel base and onboard controller |
+| ESP32 DevKit V1 | UART-connected co-processor for sensors, LED ring, and audio (no Wi-Fi role) |
+| M5StickC Plus + RoverC | Wi-Fi endpoint, motor control, and mecanum-wheel base |
 | TB6612FNG Dual Motor Driver | Efficient, low-heat motor voltage/direction control |
 | WS2812B RGB LED Ring | Visual battery gauge + mission status |
 | OPEN_SMART MP3 Player Board | UART audio cues with built-in amplifier |
@@ -144,10 +148,14 @@ Full diagram: `Documentation/`.
 
 ## 🌐 Communication Protocol
 
-- **PC → M5 (Wi-Fi):** newline-delimited text instructions (e.g. `START:1,0,0,8`), including movement, journey start, and route-error commands.
-- **PC ⇄ Dashboard (HTTP, port 8085):** REST-style endpoints — `/send_maze`, `/solve`, `/start_journey`, `/calibrate`, `/reset`, `/get_maze`, `/get_instructions`, `/get_telemetry`.
-- **Robot → PC (UDP, port 8086):** live telemetry stream (step index, yaw, ToF distances, robot state).
-- **M5 ⇄ ESP32 (Serial):** shared command IDs and audio-cue IDs defined in `ESP32/PROTOCOL.h`.
+All HTTP traffic hits the same server on port 8085, but the dashboard and the M5 talk to different endpoints on it:
+
+- **Dashboard → Server (HTTP POST):** `/send_maze`, `/calibrate`, `/reset`, `/start_journey`, `/solve` — the operator's actions.
+- **Dashboard ← Server (HTTP GET):** `/get_maze`, `/get_telemetry` — dashboard polls these to render the map and live position.
+- **M5 → Server (HTTP GET, polled by the rover every ~1.5s):** `/get_instructions` (returns newline-delimited text like `START:1,0,0,8`, `STEP:...`, `CMD:START_JOURNEY`, `CMD:ROUTE_ERROR`), `/get_calibrate`, `/get_reset` — the M5 pulls its commands rather than the server pushing them.
+- **M5 → Server (HTTP POST):** `/notify_event` — the M5 reports mission events (e.g. `ARRIVED_STATION`, `CHARGING_START`, `MISSION_COMPLETE`) as they happen.
+- **M5 → Server (UDP, port 8086):** a continuous telemetry push every 250 ms (step index, yaw, ToF distances, robot state), cached server-side and served to the dashboard via `/get_telemetry`.
+- **M5 ⇄ ESP32 (UART, text protocol):** M5 sends `PACKET:<cmdId>,<p1>,<p2>` for audio/charging/LED commands; ESP32 streams `DIST:<left>,<front>,<right>` back every 60 ms. Shared command IDs and audio-cue IDs are defined in `ESP32/PROTOCOL.h`.
 
 ---
 
