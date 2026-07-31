@@ -119,8 +119,7 @@ The two-controller split resolves this cleanly: the M5 stays factory-mounted, po
 | WS2812B RGB LED Ring | Visual battery gauge + mission status |
 | OPEN_SMART MP3 Player Board | UART audio cues with built-in amplifier |
 | VL53L1X ToF Distance Sensors ×3 | Narrow-beam collision safety buffer |
-| 2× 18650 Li-ion Cells + Holders | ~7.4V primary power source |
-| TP4056 Charging Module | Safe individual 18650 recharging between runs |
+
 
 Physical constants used throughout the routing/firmware logic: **300 mm** corridor width, **95×110 mm** rover footprint, **40 mm** ToF sensor inset.
 
